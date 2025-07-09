@@ -1,0 +1,388 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Security groups for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+  
+  VpcId:
+    Type: String
+    Description: VPC ID
+  
+  VpcCidr:
+    Type: String
+    Description: VPC CIDR block
+  
+  SmtpCidrs:
+    Type: CommaDelimitedList
+    Default: "172.16.14.210/32,172.16.14.211/32,172.40.212.200/32,172.40.212.201/32"
+    Description: SMTP CIDR ranges
+  
+  DefaultCidr:
+    Type: String
+    Default: "0.0.0.0/0"
+    Description: Default CIDR for ALB access
+
+Resources:
+  # Common Lambda Security Group
+  CommonLambdaSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub command-lambda-sg-${Client}-${Region}-${Environment}
+      GroupDescription: Allow TLS inbound traffic from Lambda security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow ingress from lambda security group to rds security group
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: To Allow lambda to call AWS services
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref VpcCidr
+          Description: To Allow lambda to access RDS
+      Tags:
+        - Key: Name
+          Value: !Sub command-lambda-sg-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Lambda Security Group
+  LambdaSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: lambda_rds_security_group
+      GroupDescription: Allow TLS inbound traffic from Lambda security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: !Ref VpcCidr
+          Description: Allow ingress from lambda security group to rds security group
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: To Allow lambda to call https port
+      Tags:
+        - Key: Name
+          Value: !Sub lambda-sg-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Add egress rule for Lambda to RDS after RDS SG is created
+  LambdaToRdsEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSG
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      DestinationSecurityGroupId: !Ref RdsSG
+      Description: To Allow RDS to call AWS service APIs
+
+  # RDS Security Group
+  RdsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub rds-postgres-sg-${Client}-${Region}-${Environment}
+      GroupDescription: Allow PostgreSQL access
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref LambdaSG
+          Description: Allow access from Lambda security group
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow HTTPS traffic within VPC
+      Tags:
+        - Key: Name
+          Value: !Sub rds-postgres-sg-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Connect Lambda Security Group
+  ConnectLambdaSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: connect_lambda_security_group
+      GroupDescription: Allow TLS inbound traffic from Lambda security group
+      VpcId: !Ref VpcId
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: To Allow lambda to call AWS service APIs
+      Tags:
+        - Key: Name
+          Value: !Sub connect-lambda-sg-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Command Center Security Group
+  CommandCenterSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub command-center-sg-${Client}-${Region}-${Environment}
+      GroupDescription: Allow tcp inbound traffic from Lambda security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow ingress from lambda security group
+      Tags:
+        - Key: Name
+          Value: !Sub command-center-sg-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Contact Center Core API Security Group
+  ContactCenterCoreApiSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub contact-center-core-api-sg-${Client}-${Region}-${Environment}
+      GroupDescription: Allow tcp inbound traffic from Lambda security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow ingress from lambda security group
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow egress from lambda security group
+      Tags:
+        - Key: Name
+          Value: !Sub contact-center-core-api-sg-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # CTR Processor Security Group
+  CtrProcessorSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ctr-processor-sg-${Client}-${Region}-${Environment}
+      GroupDescription: Allow tcp inbound traffic from Lambda security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow ingress from lambda security group
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow egress from lambda security group
+        - IpProtocol: tcp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 10.0.0.0/8
+          Description: Allow egress for DNS
+      Tags:
+        - Key: Name
+          Value: !Sub ctr-processor-sg-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Add SMTP egress rules
+  CtrProcessorSmtpEgress25:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref CtrProcessorSG
+      IpProtocol: tcp
+      FromPort: 25
+      ToPort: 25
+      CidrIp: !Select [0, !Ref SmtpCidrs]
+      Description: Allow SMTP egress
+
+  CtrProcessorSmtpEgress587:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref CtrProcessorSG
+      IpProtocol: tcp
+      FromPort: 587
+      ToPort: 587
+      CidrIp: !Select [0, !Ref SmtpCidrs]
+      Description: Allow email egress
+
+  # VPC Endpoint Security Groups
+  ContactCenterCoreEndpointSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub contact-center-core-endpoint-sg-${Client}-${Region}-${Environment}
+      GroupDescription: Allow tcp inbound traffic from vpc endpoint security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow ingress from vpc endpoint security group
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow egress from vpc endpoint security group
+      Tags:
+        - Key: Name
+          Value: !Sub contact-center-core-endpoint-sg-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  CommandCenterApiSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub command-center-api-endpoint-sg-${Client}-${Region}-${Environment}
+      GroupDescription: Allow tcp inbound traffic from vpc endpoint security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/8
+          Description: Allow ingress from application load balancer
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow egress from vpc endpoint security group
+      Tags:
+        - Key: Name
+          Value: !Sub command-center-api-endpoint-sg-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  S3EndpointSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub s3-endpoint-sg-${Client}-${Region}-${Environment}
+      GroupDescription: Allow tcp inbound traffic from vpc endpoint security group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow HTTPS ingress from vpc
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref VpcCidr
+          Description: Allow HTTP ingress from vpc
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+          Description: Allow HTTPS egress to vpc
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref VpcCidr
+          Description: Allow HTTP egress to vpc
+      Tags:
+        - Key: Name
+          Value: !Sub s3-endpoint-sg-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+Outputs:
+  CommonLambdaSGId:
+    Description: Common Lambda Security Group ID
+    Value: !Ref CommonLambdaSG
+    Export:
+      Name: !Sub ${AWS::StackName}-CommonLambdaSG
+
+  LambdaSGId:
+    Description: Lambda Security Group ID
+    Value: !Ref LambdaSG
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaSG
+
+  RdsSecurityGroupId:
+    Description: RDS Security Group ID
+    Value: !Ref RdsSG
+    Export:
+      Name: !Sub ${AWS::StackName}-RdsSG
+
+  ConnectLambdaSGId:
+    Description: Connect Lambda Security Group ID
+    Value: !Ref ConnectLambdaSG
+    Export:
+      Name: !Sub ${AWS::StackName}-ConnectLambdaSG
+
+  CommandCenterSGId:
+    Description: Command Center Security Group ID
+    Value: !Ref CommandCenterSG
+    Export:
+      Name: !Sub ${AWS::StackName}-CommandCenterSG
+
+  ContactCenterCoreApiSGId:
+    Description: Contact Center Core API Security Group ID
+    Value: !Ref ContactCenterCoreApiSG
+    Export:
+      Name: !Sub ${AWS::StackName}-ContactCenterCoreApiSG
+
+  CtrProcessorSGId:
+    Description: CTR Processor Security Group ID
+    Value: !Ref CtrProcessorSG
+    Export:
+      Name: !Sub ${AWS::StackName}-CtrProcessorSG
+
+  EndpointSecurityGroups:
+    Description: All endpoint security group IDs
+    Value: !Join 
+      - ','
+      - - !Ref ContactCenterCoreEndpointSG
+        - !Ref CommandCenterApiSG
+        - !Ref S3EndpointSG
+    Export:
+      Name: !Sub ${AWS::StackName}-EndpointSecurityGroups
+
+  LambdaSecurityGroups:
+    Description: All Lambda security group IDs
+    Value: !Join 
+      - ','
+      - - !Ref CommonLambdaSG
+        - !Ref LambdaSG
+        - !Ref ConnectLambdaSG
+        - !Ref CommandCenterSG
+        - !Ref ContactCenterCoreApiSG
+        - !Ref CtrProcessorSG
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaSecurityGroups

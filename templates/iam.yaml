@@ -1,0 +1,502 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'IAM roles and policies for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+
+Resources:
+  # Common Logging Policy
+  CommonLoggingPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub common-logging-policy-${Client}-${Region}-${Environment}
+      Description: IAM policy for lambda logging
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+            Resource: !Sub arn:aws:logs:${Region}:${AWS::AccountId}:log-group:*
+
+  # Command Center Lambda Role
+  CommandCenterLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub command-center-lambda-role-${Client}-${Region}-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref CommonLoggingPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Tags:
+        - Key: Name
+          Value: !Sub command-center-lambda-role-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  CommandCenterPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub command-center-policy-${Client}-${Region}-${Environment}
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - connect:ListPhoneNumbers
+              - connect:DescribeQueue
+              - secretsmanager:GetSecretValue
+              - connect:SearchQueues
+              - secretsmanager:DescribeSecret
+              - connect:ListUsers
+              - rds:DescribeDBInstances
+              - connect:DescribeUser
+              - connect:SearchUsers
+              - connect:ListContactFlows
+              - apigateway:GET
+            Resource:
+              - !Sub arn:aws:rds:${Region}:${AWS::AccountId}:db:db-*
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/contact-flow/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/phone-number/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/queue/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/agent/*'
+              - !Sub arn:aws:apigateway:${Region}:${AWS::AccountId}:/apis*
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/RdsSecretArn}}'
+          - Effect: Allow
+            Action:
+              - connect:ListQueues
+              - apigateway:GET
+            Resource:
+              - !Sub arn:aws:apigateway:${Region}:${AWS::AccountId}:/apis*
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/queue/*'
+      Roles:
+        - !Ref CommandCenterLambdaRole
+
+  # Contact Center Core API Lambda Role
+  ContactCenterCoreApiLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub contact-center-core-api-role-${Client}-${Region}-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref CommonLoggingPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Tags:
+        - Key: Name
+          Value: !Sub contact-center-core-api-role-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  ContactCenterCoreApiPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub command-center-rest-api-policy-${Client}-${Region}-${Environment}
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: commandCenter
+            Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+              - kms:Describe*
+              - s3:PutObject
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+              - lambda:InvokeFunction
+              - lambda:InvokeAsync
+            Resource:
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ExportedReportsBucketArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ExportedReportsBucketArn}}/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/RecordingsTranscriptsBucketArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/RecordingsTranscriptsBucketArn}}/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ScreenRecordingsBucketArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ScreenRecordingsBucketArn}}/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/VoicemailBucketArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/VoicemailBucketArn}}/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/CommandCenterBucketArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/CommandCenterBucketArn}}/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/RdsSecretArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/OutboundContactPrecheckLambdaArn}}'
+      Roles:
+        - !Ref ContactCenterCoreApiLambdaRole
+
+  # KVS Recording Processor Lambda Role
+  KvsRecordingProcessorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub kvs-recording-processor-lambda-role-${Client}-${Region}-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref CommonLoggingPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Tags:
+        - Key: Name
+          Value: !Sub kvs-recording-processor-lambda-role-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  KvsRecordingProcessorPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub kvs-recording-processor-policy-${Client}-${Region}-${Environment}
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: s3andKinesis
+            Effect: Allow
+            Action:
+              - kinesis:GetShardIterator
+              - kinesis:Get*
+              - kinesisvideo:Describe*
+              - kinesisvideo:Get*
+              - kinesisvideo:List*
+              - s3:GetObject
+              - s3:PutObject
+              - s3:ListBucket
+              - kinesis:DescribeStream
+              - s3-object-lambda:GetObject
+              - transcribe:GetTranscriptionJob
+            Resource:
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/CTRStreamArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/VoicemailBucketArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/VoicemailBucketArn}}/*'
+              - !Sub arn:aws:kinesisvideo:${Region}:${AWS::AccountId}:stream/*
+              - !Sub arn:aws:s3-object-lambda:${Region}:${AWS::AccountId}:accesspoint/*
+              - !Sub arn:aws:transcribe:${Region}:${AWS::AccountId}:transcription-job/*
+          - Sid: transcribeAccess
+            Effect: Allow
+            Action:
+              - comprehend:DetectSentiment
+              - transcribe:StartTranscriptionJob
+              - transcribe:ListTranscriptionJobs
+            Resource: '*'
+          - Sid: KinesisStreamAccess
+            Effect: Allow
+            Action: kinesisvideo:List*
+            Resource: !Sub arn:aws:kinesisvideo:${Region}:${AWS::AccountId}:stream/*
+      Roles:
+        - !Ref KvsRecordingProcessorLambdaRole
+
+  # ContactLens Evaluation Loader Lambda Role
+  ContactLensEvaluationLoaderLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub contactLens-eval-loader-lambda-role-${Client}-${Region}-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref CommonLoggingPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Tags:
+        - Key: Name
+          Value: !Sub contactLens-evaluation-loader-lambda-role-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  ContactLensEvaluationPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub contactLens-evaluation-loader-policy-${Client}-${Region}-${Environment}
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - rds:ModifyDBInstance
+              - rds:DescribeDBInstances
+              - rds:CreateDBSnapshot
+              - rds:DescribeDBSnapshots
+              - rds-db:connect
+              - s3:GetObject
+              - s3:PutObject
+              - s3:ListBucket
+              - s3:DeleteObject
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+            Resource:
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/RdsArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/RecordingsTranscriptsBucketArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/RecordingsTranscriptsBucketArn}}/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ExportedReportsBucketArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ExportedReportsBucketArn}}/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/RdsSecretArn}}'
+      Roles:
+        - !Ref ContactLensEvaluationLoaderLambdaRole
+
+  # Outbound Contact Precheck Utility Lambda Role
+  OutboundContactPrecheckUtilityLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub outbound-contact-precheck-utility-role-${Client}-${Region}-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref CommonLoggingPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Tags:
+        - Key: Name
+          Value: !Sub outbound-contact-precheck-utility-role-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  OutboundContactPrecheckUtilityPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub outbound-contact-precheck-utility-policy-${Client}-${Region}-${Environment}
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: 911Disconnect
+            Effect: Allow
+            Action:
+              - connect:ListPhoneNumbers
+              - connect:DescribeQueue
+              - connect:SearchQueues
+              - connect:ListUsers
+              - connect:DescribeUser
+              - connect:SearchUsers
+              - connect:ListContactFlows
+              - connect:StopContact
+            Resource:
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/contact/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/agent/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/queue/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/phone-number/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/contact-flow/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}'
+          - Sid: ConnectListqueues
+            Effect: Allow
+            Action:
+              - connect:ListQueues
+            Resource:
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/queue/*'
+      Roles:
+        - !Ref OutboundContactPrecheckUtilityLambdaRole
+
+  # Cloudwatch Alarm Processor Lambda Role
+  CloudwatchAlarmProcessorLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub cloudwatch-alarm-processor-role-${Client}-${Region}-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref CommonLoggingPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Tags:
+        - Key: Name
+          Value: !Sub cloudwatch-alarm-processor-role-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  CloudwatchAlarmProcessorPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub cloudwatch-alarm-processor-policy-${Client}-${Region}-${Environment}
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: cloudwatchMetricsAlarm
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+            Resource:
+              - !Sub arn:aws:secretsmanager:${Region}:${AWS::AccountId}:secret:SMTP-*
+      Roles:
+        - !Ref CloudwatchAlarmProcessorLambdaRole
+
+  # Queue Experience Utility Lambda Role
+  QueueExperienceUtilityLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub queue_experience_utility_lambda_role-${Client}-${Region}-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref CommonLoggingPolicy
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaKinesisExecutionRole
+      Tags:
+        - Key: Name
+          Value: !Sub queue_experience_utility_lambda_role-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  QueueExpEventProcessingPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub queue-exp-eventbridge-policy-${Client}-${Region}-${Environment}
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - connect:DescribeQueue
+              - connect:DescribeHoursOfOperation
+              - connect:ListUsers
+              - connect:AssociateQueueQuickConnects
+              - connect:CreateQuickConnect
+              - connect:SearchUsers
+              - connect:SearchQueues
+              - connect:DescribeUser
+              - connect:DescribeQuickConnect
+              - connect:ListQueues
+              - connect:ListContactFlows
+              - connect:DescribeContactFlow
+              - connect:SearchContactFlows
+              - connect:ListQuickConnects
+              - connect:DeleteQuickConnect
+            Resource:
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/queue/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/operating-hours/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/transfer-destination/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/quick-connect/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/agent/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}/contact-flow/*'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/ConnectInstanceArn}}'
+          - Effect: Allow
+            Action:
+              - dynamodb:PutItem
+              - dynamodb:DeleteItem
+              - dynamodb:Scan
+              - dynamodb:Query
+              - dynamodb:UpdateItem
+              - dynamodb:DescribeTable
+              - dynamodb:GetItem
+              - dynamodb:GetRecords
+            Resource: !Sub arn:aws:dynamodb:${Region}:${AWS::AccountId}:table/*
+      Roles:
+        - !Ref QueueExperienceUtilityLambdaRole
+
+  # Additional Lambda Roles (Contact Prechecks, CTR Processor, etc.)
+  # These follow similar patterns to the roles above
+
+  # Firehose Delivery Role
+  FirehoseDeliveryRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub zeta-sparrow-firehose-delivery-role-${Region}-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+
+  FirehoseDeliveryPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub zeta-sparrow-firehose-s3-policy-${Region}-${Environment}
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:AbortMultipartUpload
+              - s3:GetBucketLocation
+              - s3:GetObject
+              - s3:ListBucket
+              - s3:ListBucketMultipartUploads
+              - s3:PutObject
+            Resource:
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/FirehoseBucketArn}}'
+              - !Sub '{{resolve:ssm:/${AWS::StackName}/FirehoseBucketArn}}/*'
+          - Effect: Allow
+            Action:
+              - logs:PutLogEvents
+            Resource:
+              - !Sub arn:aws:logs:${Region}:${AWS::AccountId}:log-group:/aws/kinesisfirehose/zeta-sparrow-firehose-stream:log-stream:zeta-sparrow-S3Delivery-${Region}-${Environment}
+      Roles:
+        - !Ref FirehoseDeliveryRole
+
+Outputs:
+  CommonLoggingPolicyArn:
+    Description: Common Logging Policy ARN
+    Value: !Ref CommonLoggingPolicy
+    Export:
+      Name: !Sub ${AWS::StackName}-CommonLoggingPolicy
+
+  CommandCenterLambdaRoleArn:
+    Description: Command Center Lambda Role ARN
+    Value: !GetAtt CommandCenterLambdaRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-CommandCenterLambdaRole
+
+  ContactCenterCoreApiLambdaRoleArn:
+    Description: Contact Center Core API Lambda Role ARN
+    Value: !GetAtt ContactCenterCoreApiLambdaRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-ContactCenterCoreApiLambdaRole
+
+  FirehoseDeliveryRoleArn:
+    Description: Firehose Delivery Role ARN
+    Value: !GetAtt FirehoseDeliveryRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-FirehoseDeliveryRole
+
+  LambdaRoleArns:
+    Description: All Lambda Role ARNs
+    Value: !Join 
+      - ','
+      - - !GetAtt CommandCenterLambdaRole.Arn
+        - !GetAtt ContactCenterCoreApiLambdaRole.Arn
+        - !GetAtt KvsRecordingProcessorLambdaRole.Arn
+        - !GetAtt ContactLensEvaluationLoaderLambdaRole.Arn
+        - !GetAtt OutboundContactPrecheckUtilityLambdaRole.Arn
+        - !GetAtt CloudwatchAlarmProcessorLambdaRole.Arn
+        - !GetAtt QueueExperienceUtilityLambdaRole.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-AllLambdaRoleArns

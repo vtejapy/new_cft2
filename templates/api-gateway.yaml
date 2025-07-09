@@ -1,0 +1,573 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'API Gateway configuration for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+  
+  ContactCenterCoreApiEndpointId:
+    Type: String
+    Description: Contact Center Core API VPC Endpoint ID
+  
+  CommandCenterApiEndpointId:
+    Type: String
+    Description: Command Center API VPC Endpoint ID
+  
+  ContactCenterCoreLambdaArn:
+    Type: String
+    Description: Contact Center Core Lambda ARN
+  
+  CommandCenterLambdaArn:
+    Type: String
+    Description: Command Center Lambda ARN
+  
+  ConnectInstanceArn:
+    Type: String
+    Description: Amazon Connect Instance ARN
+
+Resources:
+  # Connect Core Private API
+  ConnectCoreApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub connect-core-private-api-${Client}-${Region}-${Environment}
+      Description: AWS Connect API
+      EndpointConfiguration:
+        Types:
+          - PRIVATE
+        VpcEndpointIds:
+          - !Ref ContactCenterCoreApiEndpointId
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: execute-api:Invoke
+            Resource: execute-api:/*
+
+  # Request Validator
+  ConnectCoreApiValidator:
+    Type: AWS::ApiGateway::RequestValidator
+    Properties:
+      Name: connect-core-private-api
+      RestApiId: !Ref ConnectCoreApi
+      ValidateRequestBody: true
+      ValidateRequestParameters: true
+
+  # Root Resources
+  AgentDesktopJwtResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !GetAtt ConnectCoreApi.RootResourceId
+      PathPart: agent-desktop-jwt-authorizer
+
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !GetAtt ConnectCoreApi.RootResourceId
+      PathPart: api
+
+  # JWT Authorizer Method
+  JwtAuthMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ResourceId: !Ref AgentDesktopJwtResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      RequestValidatorId: !Ref ConnectCoreApiValidator
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${ContactCenterCoreLambdaArn}/invocations
+
+  # API Sub-resources
+  CalllogResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: calllog
+
+  CtrResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: ctr
+
+  DestinationExtensionResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: destination-extension
+
+  FraudnumberResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: fraudnumber
+
+  PostcallsurveyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: postcallsurvey
+
+  PromptsMessageResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: prompts-message
+
+  QueueExperienceResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: queue-experience
+
+  SyncResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: sync
+
+  VoicemailResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: voicemail
+
+  IvrConfigResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: ivr-config
+
+  VmPersonalMsgResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: vm-personal-msg
+
+  ReconnectResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: reconnect
+
+  CloudwatchAlarmResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: cloudwatch-alarm
+
+  InsuranceCoreResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref ApiResource
+      PathPart: insurance-core
+
+  # Calllog endpoints
+  GetcalllogsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref CalllogResource
+      PathPart: getcalllogs
+
+  CalllogMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ResourceId: !Ref GetcalllogsResource
+      HttpMethod: POST
+      AuthorizationType: AWS_IAM
+      RequestValidatorId: !Ref ConnectCoreApiValidator
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${ContactCenterCoreLambdaArn}/invocations
+
+  # CTR endpoints
+  PutctrResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref CtrResource
+      PathPart: putctr
+
+  PutctrMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ResourceId: !Ref PutctrResource
+      HttpMethod: POST
+      AuthorizationType: AWS_IAM
+      RequestValidatorId: !Ref ConnectCoreApiValidator
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${ContactCenterCoreLambdaArn}/invocations
+
+  # Fraud Number endpoints
+  GetNumberByIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref FraudnumberResource
+      PathPart: get_number_by_id
+
+  FraudNumberParamResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref GetNumberByIdResource
+      PathPart: '{fraud_number}'
+
+  GetFraudNumberMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ResourceId: !Ref FraudNumberParamResource
+      HttpMethod: GET
+      AuthorizationType: AWS_IAM
+      RequestValidatorId: !Ref ConnectCoreApiValidator
+      RequestParameters:
+        method.request.path.fraud_number: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${ContactCenterCoreLambdaArn}/invocations
+
+  FraudNumberOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ResourceId: !Ref FraudNumberParamResource
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      RequestValidatorId: !Ref ConnectCoreApiValidator
+      Integration:
+        Type: MOCK
+        IntegrationHttpMethod: POST
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  # Prompts Message endpoints
+  GetMessageResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref PromptsMessageResource
+      PathPart: get-message
+
+  PromptMsgMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ResourceId: !Ref GetMessageResource
+      HttpMethod: POST
+      AuthorizationType: AWS_IAM
+      RequestValidatorId: !Ref ConnectCoreApiValidator
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${ContactCenterCoreLambdaArn}/invocations
+
+  # Sync endpoint
+  SyncMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ResourceId: !Ref SyncResource
+      HttpMethod: POST
+      AuthorizationType: AWS_IAM
+      RequestValidatorId: !Ref ConnectCoreApiValidator
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${ContactCenterCoreLambdaArn}/invocations
+
+  # IVR Config endpoints
+  GetIvrConfigResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref IvrConfigResource
+      PathPart: get-ivr-config
+
+  GetIvrConfigMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ResourceId: !Ref GetIvrConfigResource
+      HttpMethod: GET
+      AuthorizationType: AWS_IAM
+      RequestValidatorId: !Ref ConnectCoreApiValidator
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${ContactCenterCoreLambdaArn}/invocations
+
+  # Insurance Core endpoints
+  GetEventsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref InsuranceCoreResource
+      PathPart: getEvents
+
+  GetPolicyDetailsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref InsuranceCoreResource
+      PathPart: getPolicyDetails
+
+  GetPremiumDetailsResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref InsuranceCoreResource
+      PathPart: getPremiumDetails
+
+  IdentifyByPhoneNumberResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ParentId: !Ref InsuranceCoreResource
+      PathPart: identifyByPhoneNumber
+
+  # Insurance Core Methods
+  GetEventsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ResourceId: !Ref GetEventsResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      RequestValidatorId: !Ref ConnectCoreApiValidator
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${ContactCenterCoreLambdaArn}/invocations
+
+  GetPolicyDetailsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      ResourceId: !Ref GetPolicyDetailsResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestValidatorId: !Ref ConnectCoreApiValidator
+      RequestParameters:
+        method.request.querystring.policy_or_claim_number: true
+        method.request.querystring.role: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${ContactCenterCoreLambdaArn}/invocations
+        RequestParameters:
+          integration.request.querystring.policy_or_claim_number: method.request.querystring.policy_or_claim_number
+          integration.request.querystring.role: method.request.querystring.role
+
+  # API Deployment
+  ConnectCoreApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - JwtAuthMethod
+      - CalllogMethod
+      - PutctrMethod
+      - GetFraudNumberMethod
+      - PromptMsgMethod
+      - SyncMethod
+      - GetIvrConfigMethod
+      - GetEventsMethod
+      - GetPolicyDetailsMethod
+    Properties:
+      RestApiId: !Ref ConnectCoreApi
+      Description: !Sub Deployment for ${Environment} environment
+
+  # API Stage
+  ConnectCoreApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: !Ref Environment
+      RestApiId: !Ref ConnectCoreApi
+      DeploymentId: !Ref ConnectCoreApiDeployment
+      MethodSettings:
+        - ResourcePath: /*
+          HttpMethod: '*'
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+      Tags:
+        - Key: Name
+          Value: !Sub connect-core-private-api-stage-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Command Center API
+  CommandCenterApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub command-center-api-${Client}-${Region}-${Environment}
+      Description: Command Center API
+      EndpointConfiguration:
+        Types:
+          - PRIVATE
+        VpcEndpointIds:
+          - !Ref CommandCenterApiEndpointId
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: execute-api:Invoke
+            Resource: execute-api:/*
+
+  # Command Center Resources and Methods
+  CommandCenterApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CommandCenterApi
+      ParentId: !GetAtt CommandCenterApi.RootResourceId
+      PathPart: api
+
+  CommandCenterProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CommandCenterApi
+      ParentId: !Ref CommandCenterApiResource
+      PathPart: '{proxy+}'
+
+  CommandCenterProxyMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CommandCenterApi
+      ResourceId: !Ref CommandCenterProxyResource
+      HttpMethod: ANY
+      AuthorizationType: AWS_IAM
+      RequestParameters:
+        method.request.path.proxy: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${CommandCenterLambdaArn}/invocations
+
+  # Command Center API Deployment
+  CommandCenterApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: CommandCenterProxyMethod
+    Properties:
+      RestApiId: !Ref CommandCenterApi
+      Description: !Sub Deployment for ${Environment} environment
+
+  # Command Center API Stage
+  CommandCenterApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      StageName: !Ref Environment
+      RestApiId: !Ref CommandCenterApi
+      DeploymentId: !Ref CommandCenterApiDeployment
+      Tags:
+        - Key: Name
+          Value: !Sub command-center-api-stage-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Lambda Permissions
+  ContactCenterCoreApiTriggerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ContactCenterCoreLambdaArn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${Region}:${AWS::AccountId}:${ConnectCoreApi}/*/*/*
+
+  CommandCenterApiTriggerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CommandCenterLambdaArn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${Region}:${AWS::AccountId}:${CommandCenterApi}/*/*/*
+
+  # Store API Gateway URL in Parameter Store
+  ApiGatewayUrlParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /${AWS::StackName}/ApiGatewayUrl
+      Type: String
+      Value: !Sub https://${ConnectCoreApi}.execute-api.${Region}.amazonaws.com/${Environment}
+      Description: Connect Core API Gateway URL
+
+Outputs:
+  ConnectCoreApiId:
+    Description: Connect Core API ID
+    Value: !Ref ConnectCoreApi
+    Export:
+      Name: !Sub ${AWS::StackName}-ConnectCoreApiId
+
+  CommandCenterApiId:
+    Description: Command Center API ID
+    Value: !Ref CommandCenterApi
+    Export:
+      Name: !Sub ${AWS::StackName}-CommandCenterApiId
+
+  ConnectCoreApiUrl:
+    Description: Connect Core API URL
+    Value: !Sub https://${ConnectCoreApi}.execute-api.${Region}.amazonaws.com/${Environment}
+    Export:
+      Name: !Sub ${AWS::StackName}-ConnectCoreApiUrl
+
+  CommandCenterApiUrl:
+    Description: Command Center API URL
+    Value: !Sub https://${CommandCenterApi}.execute-api.${Region}.amazonaws.com/${Environment}
+    Export:
+      Name: !Sub ${AWS::StackName}-CommandCenterApiUrl
+
+  ApiUrls:
+    Description: All API Gateway URLs
+    Value: !Join 
+      - ','
+      - - !Sub https://${ConnectCoreApi}.execute-api.${Region}.amazonaws.com/${Environment}
+        - !Sub https://${CommandCenterApi}.execute-api.${Region}.amazonaws.com/${Environment}
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiUrls

@@ -1,0 +1,54 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'EventBridge rules for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+  
+  OutboundContactLambdaArn:
+    Type: String
+    Description: ARN of the Outbound Contact Precheck Lambda function
+
+Resources:
+  # EventBridge Rule for Outbound Contact Precheck
+  OutboundContactEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: !Sub outbound-contact-event-rule-${Client}-${Region}-${Environment}
+      Description: Rule to trigger 911 disconnect Lambda function
+      ScheduleExpression: cron(0 */3 * * ? *)
+      State: ENABLED
+      Targets:
+        - Arn: !Ref OutboundContactLambdaArn
+          Id: !Sub outbound-contact-event-trigger-${Client}-${Region}-${Environment}
+
+  # Lambda Permission for EventBridge
+  OutboundContactLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref OutboundContactLambdaArn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt OutboundContactEventRule.Arn
+
+Outputs:
+  OutboundContactEventRuleArn:
+    Description: Outbound Contact Event Rule ARN
+    Value: !GetAtt OutboundContactEventRule.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-OutboundContactEventRuleArn
+
+  OutboundContactEventRuleName:
+    Description: Outbound Contact Event Rule Name
+    Value: !Ref OutboundContactEventRule
+    Export:
+      Name: !Sub ${AWS::StackName}-OutboundContactEventRuleName

@@ -1,0 +1,49 @@
+{
+    "Parameters": {
+      "Environment": "dev",
+      "Region": "us-east-1",
+      "Client": "gen-client5",
+      "CostCenter": "1003",
+      "VpcCidr": "10.113.0.0/16",
+      "TemplatesBucket": "cf-templates-bucket-dev",
+      "LambdaCodeBucket": "lambda-code-bucket-dev",
+      "EngineVersion": "16.3",
+      "InstanceClass": "db.t3.medium",
+      "AllocatedStorage": "100",
+      "BackupRetentionPeriod": "7",
+      "MultiAZ": "false",
+      "RecTransExpiration": "2555",
+      "RecTransItTransition": "90",
+      "RecTransGlacierTransition": "365",
+      "ExpReportsExpiration": "180",
+      "ScreenRecExpiration": "60",
+      "VoicemailExpiration": "30",
+      "LexBotExpiration": "180",
+      "BucketLoggingExpiration": "180",
+      "ShardCount": "1",
+      "RetentionPeriod": "24",
+      "LongestQueueWaitTimeThreshold": "1200",
+      "CallsPerIntervalThreshold": "5",
+      "ApiGatewayLatencyThreshold": "20000",
+      "PacketLossRateThreshold": "20",
+      "CallBreachThreshold": "10",
+      "ContactFlowErrorsThreshold": "10",
+      "BaseDomain": "genpactdemos.com",
+      "AcmCertArn": "arn:aws:acm:us-east-1:123456789012:certificate/5e44efe1-86d0-4bcd-b259-41ce929556c8",
+      "SmtpCidrs": "172.16.14.210/32,172.16.14.211/32,172.40.212.200/32,172.40.212.201/32"
+    },
+    "Tags": [
+      {
+        "Key": "Environment",
+        "Value": "dev"
+      },
+      {
+        "Key": "Project",
+        "Value": "Contact Center"
+      },
+      {
+        "Key": "ManagedBy",
+        "Value": "CloudFormation"
+      }
+    ]
+  }

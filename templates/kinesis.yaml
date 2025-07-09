@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Kinesis streams and Firehose for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+  
+  FirehoseBucketArn:
+    Type: String
+    Description: ARN of the Firehose delivery bucket
+  
+  ShardCount:
+    Type: Number
+    Default: 1
+    Description: Number of shards for Kinesis streams
+  
+  RetentionPeriod:
+    Type: Number
+    Default: 24
+    Description: Retention period in hours
+
+Resources:
+  # Queue Experience Kinesis Stream
+  QueueExpKinesisStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub queue-exp-kinesis-stream-${Client}-${Region}-${Environment}
+      ShardCount: 2
+      RetentionPeriodHours: 48
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
+      StreamModeDetails:
+        StreamMode: PROVISIONED
+      Tags:
+        - Key: Name
+          Value: !Sub queue-exp-kinesis-stream-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # CTR Kinesis Stream
+  CTRKinesisStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub CTR-kinesis-streams-${Client}-${Region}-${Environment}
+      ShardCount: !Ref ShardCount
+      RetentionPeriodHours: !Ref RetentionPeriod
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
+      StreamModeDetails:
+        StreamMode: PROVISIONED
+      Tags:
+        - Key: Name
+          Value: !Sub CTR-kinesis-streams-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Agent Event Kinesis Stream
+  AgentEventKinesisStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub agent-event-kinesis-streams-${Client}-${Region}-${Environment}
+      ShardCount: !Ref ShardCount
+      RetentionPeriodHours: !Ref RetentionPeriod
+      StreamEncryption:
+        EncryptionType: KMS
+        KeyId: alias/aws/kinesis
+      StreamModeDetails:
+        StreamMode: PROVISIONED
+      Tags:
+        - Key: Name
+          Value: !Sub agent-event-kinesis-streams-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # CloudWatch Log Group for Firehose
+  FirehoseLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/kinesisfirehose/zeta-sparrow-firehose-stream
+      RetentionInDays: 7
+
+  # CloudWatch Log Stream for Firehose
+  FirehoseLogStream:
+    Type: AWS::Logs::LogStream
+    Properties:
+      LogGroupName: !Ref FirehoseLogGroup
+      LogStreamName: !Sub zeta-sparrow-S3Delivery-${Region}-${Environment}
+
+  # Kinesis Firehose Delivery Stream
+  FirehoseDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: !Sub zeta-sparrow-firehose-stream-${Region}-${Environment}
+      DeliveryStreamType: DirectPut
+      S3DestinationConfiguration:
+        BucketARN: !Ref FirehoseBucketArn
+        BufferingHints:
+          SizeInMBs: 128
+          IntervalInSeconds: 300
+        CompressionFormat: GZIP
+        CloudWatchLoggingOptions:
+          Enabled: true
+          LogGroupName: !Ref FirehoseLogGroup
+          LogStreamName: !Ref FirehoseLogStream
+        RoleARN: !Sub '{{resolve:ssm:/${AWS::StackName}/FirehoseDeliveryRoleArn}}'
+      Tags:
+        - Key: Name
+          Value: !Sub zeta-sparrow-firehose-stream-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+Outputs:
+  QueueExpStreamArn:
+    Description: Queue Experience Kinesis Stream ARN
+    Value: !GetAtt QueueExpKinesisStream.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-QueueExpStreamArn
+
+  CTRStreamArn:
+    Description: CTR Kinesis Stream ARN
+    Value: !GetAtt CTRKinesisStream.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-CTRStreamArn
+
+  AgentEventStreamArn:
+    Description: Agent Event Kinesis Stream ARN
+    Value: !GetAtt AgentEventKinesisStream.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-AgentEventStreamArn
+
+  FirehoseDeliveryStreamArn:
+    Description: Firehose Delivery Stream ARN
+    Value: !GetAtt FirehoseDeliveryStream.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-FirehoseDeliveryStreamArn
+
+  FirehoseDeliveryStreamName:
+    Description: Firehose Delivery Stream Name
+    Value: !Ref FirehoseDeliveryStream
+    Export:
+      Name: !Sub ${AWS::StackName}-FirehoseDeliveryStreamName

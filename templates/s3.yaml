@@ -1,0 +1,383 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'S3 buckets and lifecycle policies for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+  
+  RecTransExpiration:
+    Type: Number
+    Default: 2555
+    Description: Expiration days for recordings and transcripts
+  
+  RecTransItTransition:
+    Type: Number
+    Default: 90
+    Description: Days to transition to Intelligent-Tiering
+  
+  RecTransGlacierTransition:
+    Type: Number
+    Default: 365
+    Description: Days to transition to Glacier
+  
+  ExpReportsExpiration:
+    Type: Number
+    Default: 180
+    Description: Expiration days for exported reports
+  
+  ScreenRecExpiration:
+    Type: Number
+    Default: 60
+    Description: Expiration days for screen recordings
+  
+  VoicemailExpiration:
+    Type: Number
+    Default: 30
+    Description: Expiration days for voicemail
+  
+  LexBotExpiration:
+    Type: Number
+    Default: 180
+    Description: Expiration days for Lex bot data
+  
+  BucketLoggingExpiration:
+    Type: Number
+    Default: 180
+    Description: Expiration days for bucket logs
+  
+  AbortIncomplete:
+    Type: Number
+    Default: 7
+    Description: Days to abort incomplete multipart uploads
+  
+  BaseDomain:
+    Type: String
+    Default: genpactdemos.com
+    Description: Base domain name
+
+Resources:
+  # Recordings and Transcripts Bucket
+  RecordingsTranscriptsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub rec-trans-${Client}-${Region}-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: recording-transcript
+            Status: Enabled
+            ExpirationInDays: !Ref RecTransExpiration
+            Transitions:
+              - StorageClass: INTELLIGENT_TIERING
+                TransitionInDays: !Ref RecTransItTransition
+              - StorageClass: GLACIER
+                TransitionInDays: !Ref RecTransGlacierTransition
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: !Ref AbortIncomplete
+      Tags:
+        - Key: Name
+          Value: !Sub rec-trans-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Exported Reports Bucket
+  ExportedReportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub exp-reports-${Client}-${Region}-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: exported-reports
+            Status: Enabled
+            ExpirationInDays: !Ref ExpReportsExpiration
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: !Ref AbortIncomplete
+      Tags:
+        - Key: Name
+          Value: !Sub exp-reports-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Screen Recordings Bucket
+  ScreenRecordingsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub screen-rec-${Client}-${Region}-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: screen-recordings
+            Status: Enabled
+            ExpirationInDays: !Ref ScreenRecExpiration
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: !Ref AbortIncomplete
+      Tags:
+        - Key: Name
+          Value: !Sub screen-rec-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Voicemail Bucket
+  VoicemailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub voicemail-${Client}-${Region}-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: voice_mail
+            Status: Enabled
+            ExpirationInDays: !Ref VoicemailExpiration
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: !Ref AbortIncomplete
+      Tags:
+        - Key: Name
+          Value: !Sub voicemail-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Command Center Bucket
+  CommandCenterBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub command-center-${Client}-${Region}-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ccenter
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: !Ref AbortIncomplete
+      Tags:
+        - Key: Name
+          Value: !Sub command-center-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Lex Bot Grammar Bucket
+  LexBotGrammarBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub lex-bot-grammar-${Client}-${Region}-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: lex-bot-grammer
+            Status: Enabled
+            ExpirationInDays: !Ref LexBotExpiration
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: !Ref AbortIncomplete
+      Tags:
+        - Key: Name
+          Value: !Sub lex-bot-grammar-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Bucket Logging Bucket
+  BucketLoggingBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub bucket-logging-${Client}-${Region}-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: bucket-logging
+            Status: Enabled
+            ExpirationInDays: !Ref BucketLoggingExpiration
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: !Ref AbortIncomplete
+      Tags:
+        - Key: Name
+          Value: !Sub bucket-logging-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Contact Evaluation Bucket
+  ContactEvaluationBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub contact-evaluation-${Client}-${Region}-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: contact-evaluation
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: !Ref AbortIncomplete
+      Tags:
+        - Key: Name
+          Value: !Sub contact-evaluation-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # CC Admin Tool Bucket
+  CCAdminToolBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub ${Client}-cc-admin-tool.${BaseDomain}
+      VersioningConfiguration:
+        Status: Enabled
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: error.html
+      LifecycleConfiguration:
+        Rules:
+          - Id: cc-admin-tool
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: !Ref AbortIncomplete
+      Tags:
+        - Key: Name
+          Value: !Sub ${Client}-cc-admin-tool.${BaseDomain}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Firehose Bucket (for Kinesis Firehose)
+  FirehoseBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub firehose-delivery-${Client}-${Region}-${Environment}
+      VersioningConfiguration:
+        Status: Enabled
+      Tags:
+        - Key: Name
+          Value: !Sub firehose-delivery-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+Outputs:
+  RecordingsTranscriptsBucketName:
+    Description: Recordings and Transcripts Bucket Name
+    Value: !Ref RecordingsTranscriptsBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-RecordingsTranscriptsBucket
+
+  RecordingsTranscriptsBucketArn:
+    Description: Recordings and Transcripts Bucket ARN
+    Value: !GetAtt RecordingsTranscriptsBucket.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-RecordingsTranscriptsBucketArn
+
+  ExportedReportsBucketName:
+    Description: Exported Reports Bucket Name
+    Value: !Ref ExportedReportsBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-ExportedReportsBucket
+
+  ScreenRecordingsBucketName:
+    Description: Screen Recordings Bucket Name
+    Value: !Ref ScreenRecordingsBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-ScreenRecordingsBucket
+
+  VoicemailBucketName:
+    Description: Voicemail Bucket Name
+    Value: !Ref VoicemailBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-VoicemailBucket
+
+  VoicemailBucketArn:
+    Description: Voicemail Bucket ARN
+    Value: !GetAtt VoicemailBucket.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-VoicemailBucketArn
+
+  CommandCenterBucketName:
+    Description: Command Center Bucket Name
+    Value: !Ref CommandCenterBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-CommandCenterBucket
+
+  LexBotGrammarBucketName:
+    Description: Lex Bot Grammar Bucket Name
+    Value: !Ref LexBotGrammarBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-LexBotGrammarBucket
+
+  BucketLoggingBucketName:
+    Description: Bucket Logging Bucket Name
+    Value: !Ref BucketLoggingBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-BucketLoggingBucket
+
+  ContactEvaluationBucketName:
+    Description: Contact Evaluation Bucket Name
+    Value: !Ref ContactEvaluationBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-ContactEvaluationBucket
+
+  CCAdminToolBucketName:
+    Description: CC Admin Tool Bucket Name
+    Value: !Ref CCAdminToolBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-CCAdminToolBucket
+
+  FirehoseBucketName:
+    Description: Firehose Bucket Name
+    Value: !Ref FirehoseBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-FirehoseBucket
+
+  FirehoseBucketArn:
+    Description: Firehose Bucket ARN
+    Value: !GetAtt FirehoseBucket.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-FirehoseBucketArn
+
+  BucketNames:
+    Description: All S3 Bucket Names
+    Value: !Join 
+      - ','
+      - - !Ref RecordingsTranscriptsBucket
+        - !Ref ExportedReportsBucket
+        - !Ref ScreenRecordingsBucket
+        - !Ref VoicemailBucket
+        - !Ref CommandCenterBucket
+        - !Ref LexBotGrammarBucket
+        - !Ref BucketLoggingBucket
+        - !Ref ContactEvaluationBucket
+        - !Ref CCAdminToolBucket
+        - !Ref FirehoseBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-AllBucketNames
+
+  BucketArns:
+    Description: All S3 Bucket ARNs
+    Value: !Join 
+      - ','
+      - - !GetAtt RecordingsTranscriptsBucket.Arn
+        - !GetAtt ExportedReportsBucket.Arn
+        - !GetAtt ScreenRecordingsBucket.Arn
+        - !GetAtt VoicemailBucket.Arn
+        - !GetAtt CommandCenterBucket.Arn
+        - !GetAtt LexBotGrammarBucket.Arn
+        - !GetAtt BucketLoggingBucket.Arn
+        - !GetAtt ContactEvaluationBucket.Arn
+        - !GetAtt CCAdminToolBucket.Arn
+        - !GetAtt FirehoseBucket.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-AllBucketArns

@@ -1,0 +1,678 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Lambda functions and layers for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+  
+  VpcId:
+    Type: String
+    Description: VPC ID
+  
+  PrivateSubnetIds:
+    Type: CommaDelimitedList
+    Description: List of private subnet IDs
+  
+  LambdaSecurityGroupIds:
+    Type: CommaDelimitedList
+    Description: List of Lambda security group IDs
+  
+  LambdaRoleArns:
+    Type: CommaDelimitedList
+    Description: List of Lambda IAM role ARNs
+  
+  S3BucketArns:
+    Type: CommaDelimitedList
+    Description: List of S3 bucket ARNs
+  
+  RdsEndpoint:
+    Type: String
+    Description: RDS database endpoint
+  
+  RdsSecretArn:
+    Type: String
+    Description: RDS secret ARN
+  
+  DynamoDbTableName:
+    Type: String
+    Description: DynamoDB table name for queue experience
+  
+  S3VpcEndpointDns:
+    Type: String
+    Description: S3 VPC endpoint DNS
+  
+  DynamoDbEndpointDns:
+    Type: String
+    Description: DynamoDB VPC endpoint DNS
+  
+  ConnectInstanceId:
+    Type: String
+    Default: ''
+    Description: Amazon Connect instance ID
+  
+  DatabasePort:
+    Type: Number
+    Default: 5432
+    Description: Database port
+  
+  SchemaName:
+    Type: String
+    Default: agent_desktop_assist
+    Description: Database schema name
+  
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda code
+
+Resources:
+  # Lambda Layers
+  ItrAgentDesktopLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: genpact-itr-agent-desktop
+      Description: genpact-itr-agent-desktop layer for voice mail lambda notification
+      Content:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: layers/genpact-itr-agent-desktop.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.10
+
+  PostgresNewLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: genpact-postgresnew
+      Description: genpact-postgresnew layer for voice mail lambda notification
+      Content:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: layers/genpact-postgresnew.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.10
+
+  PySmtpLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: genpact-pysmtp
+      Description: genpact-pysmtp layer for connect notification lambda
+      Content:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: layers/genpact-pysmtp.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.10
+
+  PyRequestsLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: genpact-pyrequests
+      Description: genpact-pyrequests layer for holiday emergency message
+      Content:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: layers/genpact-pyrequests.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.10
+
+  AxiosRequestLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: genpact-axiosrequest
+      Description: genpact-axiosrequest layer for voice mail lambda
+      Content:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: layers/genpact-axiosrequest.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.10
+
+  NodeMailerLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: genpact-nodemailer
+      Description: genpact-nodemailer layer for voice mail lambda notification
+      Content:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: layers/genpact-nodemailer.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - nodejs18.x
+
+  AwsCryptoLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: genpact-awscrypto
+      Description: genpact-awscrypto layer for voice mail lambda notification
+      Content:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: layers/genpact-awscrypto.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - nodejs18.x
+
+  Kvs2ACwavLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: genpact-kvs2ACwav
+      Description: genpact-kvs2ACwav layer for voice mail lambda notification
+      Content:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: layers/genpact-kvs2ACwav.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - nodejs20.x
+
+  JwtLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: genpact-jwt
+      Description: genpact-jwt layer
+      Content:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: layers/genpact-jwt.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.10
+
+  Psycopg2NewLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: genpact-psycopg2_new
+      Description: genpact-psycopg2_new
+      Content:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: layers/genpact-psycopg2-new.zip
+      CompatibleArchitectures:
+        - x86_64
+      CompatibleRuntimes:
+        - python3.10
+
+  # Lambda Functions
+  CommandCenterLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub command-center-lambda-${Client}-${Region}-${Environment}
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.10
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/command-center.zip
+      MemorySize: 128
+      Timeout: 30
+      Role: !Select [0, !Ref LambdaRoleArns]
+      Layers:
+        - !Ref ItrAgentDesktopLayer
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Split [',', !Select [3, !Ref LambdaSecurityGroupIds]]
+      Environment:
+        Variables:
+          BUCKET_ENDPOINT_URL: !Ref S3VpcEndpointDns
+          DATABASE_ENDPOINT: !Select [0, !Split [':', !Ref RdsEndpoint]]
+          DATABASE_NAME: postgres
+          DATABASE_PORT: !Ref DatabasePort
+          INSTANCE_ID: !Ref ConnectInstanceId
+          REGION_NAME: !Ref Region
+          S3_BUCKET: !Select [3, !Split ['/', !Select [3, !Ref S3BucketArns]]]
+          S3_PREFIX: /
+          SCHEME_NAME: !Ref SchemaName
+          SECRET_MANAGER_NAME: !Ref RdsSecretArn
+      Tags:
+        - Key: Name
+          Value: !Sub command-center-lambda-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  ContactCenterCoreApiLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub contact-center-core-api-lambda-${Client}-${Region}-${Environment}
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.10
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/contact-center-core-api.zip
+      MemorySize: 512
+      Timeout: 30
+      Role: !Select [1, !Ref LambdaRoleArns]
+      Layers:
+        - !Ref ItrAgentDesktopLayer
+        - !Ref JwtLayer
+        - !Ref Psycopg2NewLayer
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Ref LambdaSecurityGroupIds
+      Environment:
+        Variables:
+          BUCKET_ENDPOINT_URL: !Ref S3VpcEndpointDns
+          DATABASE_ENDPOINT: !Select [0, !Split [':', !Ref RdsEndpoint]]
+          DATABASE_NAME: postgres
+          DATABASE_PORT: !Ref DatabasePort
+          INSTANCE_ID: !Ref ConnectInstanceId
+          REGION_NAME: !Ref Region
+          S3_BUCKET: !Select [3, !Split ['/', !Select [3, !Ref S3BucketArns]]]
+          S3_PREFIX: /
+          SCHEME_NAME: !Ref SchemaName
+          SECRET_MANAGER_NAME: !Ref RdsSecretArn
+      Tags:
+        - Key: Name
+          Value: !Sub contact-center-core-api-lambda-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  KvsRecordingProcessorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub kvs-processor-lambda-${Client}-${Region}-${Environment}
+      Handler: index.handler
+      Runtime: nodejs20.x
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/kvs-processor.zip
+      MemorySize: 512
+      Timeout: 180
+      Role: !Select [2, !Ref LambdaRoleArns]
+      Layers:
+        - !Ref Kvs2ACwavLayer
+        - !Ref AwsCryptoLayer
+        - !Ref NodeMailerLayer
+        - !Ref AxiosRequestLayer
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Split [',', !Join [',', [!Select [0, !Ref LambdaSecurityGroupIds], !Select [1, !Ref LambdaSecurityGroupIds]]]]
+      Tags:
+        - Key: Name
+          Value: !Sub kvs-processor-lambda-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  ContactLensEvaluationLoaderLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub contactLens-evaluation-loader-lambda-${Client}-${Region}-${Environment}
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.10
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/contactlens-evaluation-loader.zip
+      MemorySize: 128
+      Timeout: 900
+      Role: !Select [3, !Ref LambdaRoleArns]
+      Layers:
+        - !Ref PostgresNewLayer
+        - !Sub arn:aws:lambda:${Region}:336392948345:layer:AWSSDKPandas-Python310:19
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Ref LambdaSecurityGroupIds
+      Environment:
+        Variables:
+          obucket_endpoint_url: !Ref S3VpcEndpointDns
+          contact_lens_path: Reports/EDH/Daily/ContactLens
+          headers1: Contact ID,Contact Date,Agent ID,Agent Name,Survey ID, Question1 ID, Answer1, Question2 ID,Answer2,Question3 ID,Answer3,Question4 ID,Answer4,Question5 ID,Answer5,Question6 ID,Answer6,Customer Sentiment score
+          headers2: Contact ID,Contact Date,Agent Name,Call Category,Sentiment Score
+          host: !Ref RdsEndpoint
+          port: !Ref DatabasePort
+          postcall_survey_path: Reports/EDH/Daily/PostCallSurvey
+          query1: SELECT t1.contact_id, t1.created_at, t3.ai_agentid, t3.ai_agentname, t1.survey_id, t1.question_id, t1.results, t1.comprehend FROM agent_desktop_assist.postcallsurveyresults t1 INNER JOIN agent_desktop_assist.postcallsurveyquestions t2 ON t1.question_id = t2.question_id INNER JOIN agent_desktop_assist.agentinteraction t3 ON t1.contact_id = t3.ai_contactid WHERE DATE(t1.created_at) = CURRENT_DATE order by created_at;
+          query2: SELECT clr_contact_id, clr_created_date,ai_agentname AS interaction_agent_name, clr_call_category, clr_sentiment FROM agent_desktop_assist.contactlensedhreport AS clr INNER JOIN agent_desktop_assist.agentinteraction AS ai ON clr.clr_contact_id = ai.ai_contactid where date(clr.clr_created_date)= CURRENT_DATE;
+          region_name: !Ref Region
+          secret_name: !Ref RdsSecretArn
+          ctr_prefix: CTR/ErrorRecords/
+          ctr_processed_prefix: CTR/Processed/
+          edh_secret_name: EDH
+      Tags:
+        - Key: Name
+          Value: !Sub contactLens-evaluation-loader-lambda-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  OutboundContactPrecheckUtilityLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub outbound-contact-prechk-util-lambda-${Client}-${Region}-${Environment}
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.10
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/outbound-contact-precheck-utility.zip
+      MemorySize: 128
+      Timeout: 300
+      Role: !Select [4, !Ref LambdaRoleArns]
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Split [',', !Select [0, !Ref LambdaSecurityGroupIds]]
+      Environment:
+        Variables:
+          INSTANCE_ID: !Ref ConnectInstanceId
+      Tags:
+        - Key: Name
+          Value: !Sub outbound-contact-prechk-util-lambda-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  CloudwatchAlarmProcessorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub cloudwatch-alarm-processor-lambda-${Client}-${Region}-${Environment}
+      Handler: index.handler
+      Runtime: nodejs20.x
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/cloudwatch-alarm-processor.zip
+      MemorySize: 256
+      Timeout: 10
+      Role: !Select [5, !Ref LambdaRoleArns]
+      Layers:
+        - !Ref NodeMailerLayer
+        - !Ref AwsCryptoLayer
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Ref LambdaSecurityGroupIds
+      Environment:
+        Variables:
+          SMTP_From_Address: $gnwcc-dev@genworth.com
+          SMTP_host: smtp.genworth.net
+          SMTP_port: '587'
+          SMTP_secret_name: SMTP
+          SMTP_username: smtp-user
+          region_name: !Ref Region
+          cw_alarm_api: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/cloudwatch-alarm/get-notification-details/'
+      Tags:
+        - Key: Name
+          Value: !Sub cloudwatch-alarm-processor-lambda-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  QueueExperienceUtilityLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub queue-experience-utilit-lambda-${Client}-${Region}-${Environment}
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.10
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/queue-experience-utility.zip
+      MemorySize: 128
+      Timeout: 300
+      Role: !Select [6, !Ref LambdaRoleArns]
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Ref LambdaSecurityGroupIds
+      Environment:
+        Variables:
+          DYNAMODB_ENDPOINT_URL: !Ref DynamoDbEndpointDns
+          QueuePositionTable: !Ref DynamoDbTableName
+          contactflowid: ''
+          instanceid: !Ref ConnectInstanceId
+      Tags:
+        - Key: Name
+          Value: !Sub queue-experience-utility-lambda-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  ContactPrechecksUtilityLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub contact-prechecks-utility-lambda-${Client}-${Region}-${Environment}
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.10
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/contact-prechecks-utility.zip
+      MemorySize: 128
+      Timeout: 15
+      Role: !Select [7, !Ref LambdaRoleArns]
+      Layers:
+        - !Ref PyRequestsLayer
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Ref LambdaSecurityGroupIds
+      Environment:
+        Variables:
+          fraud_number_api: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/fraudnumber/get_number_by_id/'
+          get_message_api: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/prompts-message/get-message'
+          region_name: !Ref Region
+          ivr_config_api: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/ivr-config/get-ivr-config'
+      Tags:
+        - Key: Name
+          Value: !Sub contact-prechecks-utility-lambda-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  CtrProcessorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ctr-processor-lambda-${Client}-${Region}-${Environment}
+      Handler: index.handler
+      Runtime: nodejs18.x
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/ctr-processor.zip
+      MemorySize: 512
+      Timeout: 600
+      Role: !Select [8, !Ref LambdaRoleArns]
+      Layers:
+        - !Ref Kvs2ACwavLayer
+        - !Ref AwsCryptoLayer
+        - !Ref NodeMailerLayer
+        - !Ref AxiosRequestLayer
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Ref LambdaSecurityGroupIds
+      Environment:
+        Variables:
+          aws_region: !Ref Region
+          BUCKET_ENDPOINT_URL: ''
+          SMTP_From_Address: ''
+          SMTP_Mail_Template_CC_URL: ''
+          SMTP_host: ''
+          SMTP_port: ''
+          SMTP_secret_name: ''
+          SMTP_username: ''
+          child_lambda_name: ''
+          Not_required: ''
+          ctr_bucket_name: ''
+          ctr_prefix: ''
+          mail_id_api: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/voicemail/get-voicemail-delivery-setups-by-aws-id'
+          putctr_api: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/ctr/putctr'
+          s3_ivrRecording_bucket: !Sub '{{resolve:ssm:/${AWS::StackName}/VoicemailBucket}}/IvrRecordings'
+          s3_postcallsurvey_bucket: !Sub '{{resolve:ssm:/${AWS::StackName}/VoicemailBucket}}/PostcallSurveyRecordings'
+          s3_voicemail_bucket: !Sub '{{resolve:ssm:/${AWS::StackName}/VoicemailBucket}}/Voicemail'
+      Tags:
+        - Key: Name
+          Value: !Sub ctr-processor-lambda-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  PostCallSurveyUtilityLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub post-call-survey-utility-lambda-${Client}-${Region}-${Environment}
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.10
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/post-call-survey-utility.zip
+      MemorySize: 512
+      Timeout: 180
+      Role: !Select [9, !Ref LambdaRoleArns]
+      Layers:
+        - !Ref PyRequestsLayer
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Split [',', !Select [0, !Ref LambdaSecurityGroupIds]]
+      Environment:
+        Variables:
+          base_url: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/postcallsurvey/get-survey-details/'
+          region_name: !Ref Region
+      Tags:
+        - Key: Name
+          Value: !Sub post-call-survey-utility-lambda-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  InsuranceIdentificationTriggerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub insurance-identification-and-triggers-${Client}-${Region}-${Environment}
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.10
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/insurance-identification-trigger.zip
+      MemorySize: 128
+      Timeout: 30
+      Role: !Select [10, !Ref LambdaRoleArns]
+      Layers:
+        - !Ref PyRequestsLayer
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Ref LambdaSecurityGroupIds
+      Environment:
+        Variables:
+          auth_url: ''
+          bot_secret_url: ''
+          cl_queue: ''
+          cs_queue: ''
+          event_url: ''
+          ext_url: ''
+          identify_producer_phone_url: ''
+          identify_producer_url: ''
+          reconnect_url: ''
+          get_premium_details_url: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/insurance-core/getPremiumDetails?policy_number={policy_number}'
+          identify_phone_url: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/insurance-core/identifyByPhoneNumber?phone_number={phone_number}&role={role}'
+          region_name: !Ref Region
+          identify_policy_claim_url: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/insurance-core/getPolicyDetails?policy_or_claim_number={policy_or_claim_number}&role={role}'
+      Tags:
+        - Key: Name
+          Value: !Sub insurance-identification-and-triggers-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  InsuranceServicesLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub insurance-services-${Client}-${Region}-${Environment}
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.10
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: functions/insurance-services.zip
+      MemorySize: 128
+      Timeout: 30
+      Role: !Select [11, !Ref LambdaRoleArns]
+      Layers:
+        - !Ref PyRequestsLayer
+      VpcConfig:
+        SubnetIds: !Ref PrivateSubnetIds
+        SecurityGroupIds: !Ref LambdaSecurityGroupIds
+      Environment:
+        Variables:
+          fraud_number_api: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/fraudnumber/get_number_by_id/'
+          get_message_api: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/prompts-message/get-message'
+          region_name: !Ref Region
+          ivr_config_api: !Sub '{{resolve:ssm:/${AWS::StackName}/ApiGatewayUrl}}/api/ivr-config/get-ivr-config'
+      Tags:
+        - Key: Name
+          Value: !Sub insurance-services-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Lambda Event Source Mapping for CTR Processor
+  CtrProcessorEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 5
+      MaximumRetryAttempts: 1
+      ParallelizationFactor: 5
+      BisectBatchOnFunctionError: true
+      EventSourceArn: !Sub '{{resolve:ssm:/${AWS::StackName}/CTRStreamArn}}'
+      FunctionName: !Ref CtrProcessorLambda
+      StartingPosition: LATEST
+
+  # Lambda Permissions
+  CloudwatchAlarmProcessorPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CloudwatchAlarmProcessorLambda
+      Action: lambda:InvokeFunction
+      Principal: lambda.alarms.cloudwatch.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+
+Outputs:
+  CommandCenterLambdaArn:
+    Description: Command Center Lambda ARN
+    Value: !GetAtt CommandCenterLambda.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-CommandCenterLambdaArn
+
+  ContactCenterCoreLambdaArn:
+    Description: Contact Center Core API Lambda ARN
+    Value: !GetAtt ContactCenterCoreApiLambda.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-ContactCenterCoreLambdaArn
+
+  KvsRecordingProcessorLambdaArn:
+    Description: KVS Recording Processor Lambda ARN
+    Value: !GetAtt KvsRecordingProcessorLambda.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-KvsRecordingProcessorLambdaArn
+
+  ContactLensEvaluationLoaderLambdaArn:
+    Description: ContactLens Evaluation Loader Lambda ARN
+    Value: !GetAtt ContactLensEvaluationLoaderLambda.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-ContactLensEvaluationLoaderLambdaArn
+
+  OutboundContactPrecheckLambdaArn:
+    Description: Outbound Contact Precheck Lambda ARN
+    Value: !GetAtt OutboundContactPrecheckUtilityLambda.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-OutboundContactPrecheckLambdaArn
+
+  CloudWatchAlarmProcessorLambdaArn:
+    Description: CloudWatch Alarm Processor Lambda ARN
+    Value: !GetAtt CloudwatchAlarmProcessorLambda.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-CloudWatchAlarmProcessorLambdaArn
+
+  PostCallSurveyUtilityLambdaArn:
+    Description: Post Call Survey Utility Lambda ARN
+    Value: !GetAtt PostCallSurveyUtilityLambda.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-PostCallSurveyUtilityLambdaArn
+
+  LambdaLayerArns:
+    Description: All Lambda Layer ARNs
+    Value: !Join 
+      - ','
+      - - !Ref ItrAgentDesktopLayer
+        - !Ref PostgresNewLayer
+        - !Ref PySmtpLayer
+        - !Ref PyRequestsLayer
+        - !Ref AxiosRequestLayer
+        - !Ref NodeMailerLayer
+        - !Ref AwsCryptoLayer
+        - !Ref Kvs2ACwavLayer
+        - !Ref JwtLayer
+        - !Ref Psycopg2NewLayer
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaLayerArns

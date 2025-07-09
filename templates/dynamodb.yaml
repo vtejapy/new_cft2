@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DynamoDB tables for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+
+Resources:
+  # Queue Experience DynamoDB Table
+  QueueExperienceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub queue-experience-db-${Client}-${Region}-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: contactId
+          AttributeType: S
+        - AttributeName: channel
+          AttributeType: S
+        - AttributeName: queueName
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: contactId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: QueueNameIndex
+          KeySchema:
+            - AttributeName: queueName
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: TimestampIndex
+          KeySchema:
+            - AttributeName: timestamp
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: ChannelIndex
+          KeySchema:
+            - AttributeName: channel
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Name
+          Value: !Sub queue-experience-db-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+Outputs:
+  QueueExperienceTableName:
+    Description: Queue Experience DynamoDB Table Name
+    Value: !Ref QueueExperienceTable
+    Export:
+      Name: !Sub ${AWS::StackName}-QueueExperienceTable
+
+  QueueExperienceTableArn:
+    Description: Queue Experience DynamoDB Table ARN
+    Value: !GetAtt QueueExperienceTable.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-QueueExperienceTableArn
+
+  QueueExperienceTableStreamArn:
+    Description: Queue Experience DynamoDB Table Stream ARN
+    Value: !GetAtt QueueExperienceTable.StreamArn
+    Export:
+      Name: !Sub ${AWS::StackName}-QueueExperienceTableStreamArn

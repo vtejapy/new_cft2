@@ -1,0 +1,320 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudWatch dashboards and alarms for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+  
+  ConnectInstanceId:
+    Type: String
+    Description: Amazon Connect Instance ID
+  
+  CloudWatchAlarmLambdaArn:
+    Type: String
+    Description: CloudWatch Alarm Processor Lambda ARN
+  
+  ApiGatewayRestApiId:
+    Type: String
+    Description: API Gateway REST API ID
+  
+  LongestQueueWaitTimeThreshold:
+    Type: Number
+    Default: 1200
+    Description: Threshold for longest queue wait time in seconds
+  
+  CallsPerIntervalThreshold:
+    Type: Number
+    Default: 5
+    Description: Threshold for calls per interval
+  
+  ApiGatewayLatencyThreshold:
+    Type: Number
+    Default: 20000
+    Description: API Gateway latency threshold in milliseconds
+  
+  PacketLossRateThreshold:
+    Type: Number
+    Default: 20
+    Description: Packet loss rate threshold percentage
+  
+  CallBreachThreshold:
+    Type: Number
+    Default: 10
+    Description: Calls breaching concurrency quota threshold
+  
+  ContactFlowErrorsThreshold:
+    Type: Number
+    Default: 10
+    Description: Contact flow errors threshold
+
+Resources:
+  # CloudWatch Dashboard
+  ConnectMetricsDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub Amazon-Connect-Metrics-${Client}-${Environment}
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  [ "AWS/Connect", "CallsPerInterval", { "stat": "Sum" } ],
+                  [ ".", "CallsBreachingConcurrencyQuota", { "stat": "Sum" } ],
+                  [ ".", "ContactFlowErrors", { "stat": "Sum" } ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${Region}",
+                "title": "Connect Call Metrics",
+                "dimensions": {
+                  "InstanceId": "${ConnectInstanceId}"
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  [ "AWS/Connect", "LongestQueueWaitTime", "QueueName", "CS General Inquiry", { "stat": "Maximum" } ]
+                ],
+                "period": 300,
+                "stat": "Maximum",
+                "region": "${Region}",
+                "title": "Queue Wait Times",
+                "dimensions": {
+                  "InstanceId": "${ConnectInstanceId}"
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApiGateway", "Latency", "ApiName", "${ApiGatewayRestApiId}", { "stat": "Average" } ],
+                  [ ".", "5xx", ".", ".", { "stat": "Sum" } ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${Region}",
+                "title": "API Gateway Metrics"
+              }
+            }
+          ]
+        }
+
+  # Longest Queue Wait Time Alarm
+  LongestQueueWaitTimeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub connect-longest-queue-wait-time-alarm-${Client}-${Environment}
+      AlarmDescription: Alert when queue wait time exceeds threshold
+      MetricName: LongestQueueWaitTime
+      Namespace: AWS/Connect
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref LongestQueueWaitTimeThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref ConnectInstanceId
+        - Name: QueueName
+          Value: CS General Inquiry
+        - Name: MetricGroup
+          Value: Queue
+      AlarmActions:
+        - !Ref CloudWatchAlarmLambdaArn
+      TreatMissingData: missing
+
+  # Calls Per Interval Alarm
+  CallsPerIntervalAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub connect-calls-per-interval-alarm-${Client}-${Environment}
+      AlarmDescription: Alert when calls per interval is below threshold
+      MetricName: CallsPerInterval
+      Namespace: AWS/Connect
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 5
+      Threshold: !Ref CallsPerIntervalThreshold
+      ComparisonOperator: LessThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref ConnectInstanceId
+        - Name: MetricGroup
+          Value: VoiceCalls
+      AlarmActions:
+        - !Ref CloudWatchAlarmLambdaArn
+      TreatMissingData: breaching
+
+  # API Gateway Latency Alarm
+  ApiGatewayLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub api-gateway-latency-alarm-${Client}-${Environment}
+      AlarmDescription: Alert when API Gateway latency exceeds threshold
+      MetricName: Latency
+      Namespace: AWS/ApiGateway
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 6
+      DatapointsToAlarm: 5
+      Threshold: !Ref ApiGatewayLatencyThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Ref ApiGatewayRestApiId
+      AlarmActions:
+        - !Ref CloudWatchAlarmLambdaArn
+      TreatMissingData: missing
+
+  # API Gateway 5XX Errors Alarm
+  ApiGateway5xxErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub api-gateway-5xx-errors-alarm-${Client}-${Environment}
+      AlarmDescription: Alert when API Gateway 5XX errors exceed threshold
+      MetricName: 5xx
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 50
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ApiName
+          Value: !Ref ApiGatewayRestApiId
+      AlarmActions:
+        - !Ref CloudWatchAlarmLambdaArn
+      TreatMissingData: notBreaching
+
+  # Packet Loss Rate Alarm
+  PacketLossRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub connect-packet-loss-rate-alarm-${Client}-${Environment}
+      AlarmDescription: Alert when packet loss rate exceeds threshold
+      MetricName: ToInstancePacketLossRate
+      Namespace: AWS/Connect
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 10
+      DatapointsToAlarm: 5
+      Threshold: !Ref PacketLossRateThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref ConnectInstanceId
+        - Name: Participant
+          Value: Agent
+        - Name: Type of Connection
+          Value: WebRTC
+        - Name: Stream Type
+          Value: Voice
+      AlarmActions:
+        - !Ref CloudWatchAlarmLambdaArn
+      TreatMissingData: notBreaching
+
+  # Calls Breaching Concurrency Quota Alarm
+  CallsBreachingQuotaAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub connect-calls-breaching-quota-alarm-${Client}-${Environment}
+      AlarmDescription: Alert when calls breach concurrency quota
+      MetricName: CallsBreachingConcurrencyQuota
+      Namespace: AWS/Connect
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref CallBreachThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref ConnectInstanceId
+        - Name: MetricGroup
+          Value: VoiceCalls
+      AlarmActions:
+        - !Ref CloudWatchAlarmLambdaArn
+      TreatMissingData: notBreaching
+
+  # Contact Flow Errors Alarm
+  ContactFlowErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub connect-contact-flow-errors-alarm-${Client}-${Environment}
+      AlarmDescription: Alert when contact flow errors exceed threshold
+      MetricName: ContactFlowErrors
+      Namespace: AWS/Connect
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: !Ref ContactFlowErrorsThreshold
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref ConnectInstanceId
+        - Name: MetricGroup
+          Value: ContactFlow
+        - Name: ContactFlowName
+          Value: CS General
+      AlarmActions:
+        - !Ref CloudWatchAlarmLambdaArn
+      TreatMissingData: notBreaching
+
+  # Queue Capacity Exceeded Error Alarm
+  QueueCapacityExceededAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub connect-queue-capacity-exceeded-alarm-${Client}-${Environment}
+      AlarmDescription: Alert when queue capacity is exceeded
+      MetricName: QueueCapacityExceededError
+      Namespace: AWS/Connect
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref ConnectInstanceId
+        - Name: QueueName
+          Value: CS General Inquiry
+        - Name: MetricGroup
+          Value: Queue
+      AlarmActions:
+        - !Ref CloudWatchAlarmLambdaArn
+      TreatMissingData: notBreaching
+
+Outputs:
+  DashboardURL:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub https://console.aws.amazon.com/cloudwatch/home?region=${Region}#dashboards:name=${ConnectMetricsDashboard}
+    Export:
+      Name: !Sub ${AWS::StackName}-DashboardURL
+
+  AlarmNames:
+    Description: All CloudWatch Alarm Names
+    Value: !Join 
+      - ','
+      - - !Ref LongestQueueWaitTimeAlarm
+        - !Ref CallsPerIntervalAlarm
+        - !Ref ApiGatewayLatencyAlarm
+        - !Ref ApiGateway5xxErrorsAlarm
+        - !Ref PacketLossRateAlarm
+        - !Ref CallsBreachingQuotaAlarm
+        - !Ref ContactFlowErrorsAlarm
+        - !Ref QueueCapacityExceededAlarm
+    Export:
+      Name: !Sub ${AWS::StackName}-AlarmNames

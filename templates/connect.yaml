@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Amazon Connect instance and configuration for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+  
+  RecordingsBucketArn:
+    Type: String
+    Description: ARN of the recordings and transcripts S3 bucket
+  
+  CTRStreamArn:
+    Type: String
+    Description: ARN of the CTR Kinesis stream
+  
+  AgentEventStreamArn:
+    Type: String
+    Description: ARN of the Agent Event Kinesis stream
+
+Resources:
+  # Amazon Connect Instance
+  ConnectInstance:
+    Type: AWS::Connect::Instance
+    Properties:
+      Attributes:
+        InboundCalls: true
+        OutboundCalls: true
+        ContactflowLogs: true
+        ContactLens: true
+        AutoResolveBestVoices: true
+        UseCustomTTSVoices: false
+        EarlyMedia: true
+      IdentityManagementType: CONNECT_MANAGED
+      InstanceAlias: !Sub ${Client}-contact-center-${Environment}
+
+  # Storage Configuration for Call Recordings
+  ConnectStorageConfig:
+    Type: AWS::Connect::InstanceStorageConfig
+    Properties:
+      InstanceArn: !GetAtt ConnectInstance.Arn
+      ResourceType: CALL_RECORDINGS
+      StorageType: S3
+      S3Config:
+        BucketName: !Select [5, !Split [':', !Ref RecordingsBucketArn]]
+        BucketPrefix: CallRecordings
+        EncryptionConfig:
+          EncryptionType: KMS
+          KeyId: alias/aws/s3
+
+  # Storage Configuration for Chat Transcripts
+  ConnectChatStorageConfig:
+    Type: AWS::Connect::InstanceStorageConfig
+    Properties:
+      InstanceArn: !GetAtt ConnectInstance.Arn
+      ResourceType: CHAT_TRANSCRIPTS
+      StorageType: S3
+      S3Config:
+        BucketName: !Select [5, !Split [':', !Ref RecordingsBucketArn]]
+        BucketPrefix: ChatTranscripts
+        EncryptionConfig:
+          EncryptionType: KMS
+          KeyId: alias/aws/s3
+
+  # Storage Configuration for Scheduled Reports
+  ConnectReportsStorageConfig:
+    Type: AWS::Connect::InstanceStorageConfig
+    Properties:
+      InstanceArn: !GetAtt ConnectInstance.Arn
+      ResourceType: SCHEDULED_REPORTS
+      StorageType: S3
+      S3Config:
+        BucketName: !Select [5, !Split [':', !Ref RecordingsBucketArn]]
+        BucketPrefix: Reports
+        EncryptionConfig:
+          EncryptionType: KMS
+          KeyId: alias/aws/s3
+
+  # Enable Contact Lens
+  ConnectContactLensStorageConfig:
+    Type: AWS::Connect::InstanceStorageConfig
+    Properties:
+      InstanceArn: !GetAtt ConnectInstance.Arn
+      ResourceType: CONTACT_TRACE_RECORDS
+      StorageType: KINESIS_STREAM
+      KinesisStreamConfig:
+        StreamArn: !Ref CTRStreamArn
+
+  # Agent Events Stream Configuration
+  ConnectAgentEventsConfig:
+    Type: AWS::Connect::InstanceStorageConfig
+    Properties:
+      InstanceArn: !GetAtt ConnectInstance.Arn
+      ResourceType: AGENT_EVENTS
+      StorageType: KINESIS_STREAM
+      KinesisStreamConfig:
+        StreamArn: !Ref AgentEventStreamArn
+
+  # Store Connect Instance ID and ARN in Parameter Store
+  ConnectInstanceIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /${AWS::StackName}/ConnectInstanceId
+      Type: String
+      Value: !Ref ConnectInstance
+      Description: Amazon Connect Instance ID
+
+  ConnectInstanceArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /${AWS::StackName}/ConnectInstanceArn
+      Type: String
+      Value: !GetAtt ConnectInstance.Arn
+      Description: Amazon Connect Instance ARN
+
+Outputs:
+  ConnectInstanceId:
+    Description: Amazon Connect Instance ID
+    Value: !Ref ConnectInstance
+    Export:
+      Name: !Sub ${AWS::StackName}-ConnectInstanceId
+
+  ConnectInstanceArn:
+    Description: Amazon Connect Instance ARN
+    Value: !GetAtt ConnectInstance.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-ConnectInstanceArn
+
+  ConnectInstanceAlias:
+    Description: Amazon Connect Instance Alias
+    Value: !GetAtt ConnectInstance.InstanceAlias
+    Export:
+      Name: !Sub ${AWS::StackName}-ConnectInstanceAlias
+
+  ConnectServiceRole:
+    Description: Amazon Connect Service Role
+    Value: !GetAtt ConnectInstance.ServiceRole
+    Export:
+      Name: !Sub ${AWS::StackName}-ConnectServiceRole

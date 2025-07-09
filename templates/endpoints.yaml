@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'VPC endpoints for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+  
+  VpcId:
+    Type: String
+    Description: VPC ID
+  
+  VpcCidr:
+    Type: String
+    Description: VPC CIDR block
+  
+  PrivateSubnetIds:
+    Type: CommaDelimitedList
+    Description: List of private subnet IDs
+  
+  SecurityGroupIds:
+    Type: CommaDelimitedList
+    Description: List of security group IDs for endpoints
+
+Resources:
+  # API Gateway Endpoint for Contact Center Core API
+  ContactCenterCoreApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${Region}.execute-api
+      VpcEndpointType: Interface
+      SecurityGroupIds:
+        - !Select [0, !Ref SecurityGroupIds]
+      SubnetIds: !Ref PrivateSubnetIds
+      PrivateDnsEnabled: true
+
+  # API Gateway Endpoint for Command Center
+  CommandCenterApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${Region}.execute-api
+      VpcEndpointType: Interface
+      SecurityGroupIds:
+        - !Select [1, !Ref SecurityGroupIds]
+      SubnetIds: !Ref PrivateSubnetIds
+      PrivateDnsEnabled: false
+
+  # S3 Endpoint
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${Region}.s3
+      VpcEndpointType: Interface
+      SecurityGroupIds:
+        - !Select [2, !Ref SecurityGroupIds]
+      SubnetIds: !Ref PrivateSubnetIds
+
+  # Secrets Manager Endpoint
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${Region}.secretsmanager
+      VpcEndpointType: Interface
+      SecurityGroupIds:
+        - !Select [0, !Ref SecurityGroupIds]
+      SubnetIds: !Ref PrivateSubnetIds
+      PrivateDnsEnabled: true
+
+  # Comprehend Endpoint
+  ComprehendEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${Region}.comprehend
+      VpcEndpointType: Interface
+      SecurityGroupIds:
+        - !Select [0, !Ref SecurityGroupIds]
+      SubnetIds: !Ref PrivateSubnetIds
+      PrivateDnsEnabled: true
+
+  # Transcribe Endpoint
+  TranscribeEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${Region}.transcribe
+      VpcEndpointType: Interface
+      SecurityGroupIds:
+        - !Select [0, !Ref SecurityGroupIds]
+      SubnetIds: !Ref PrivateSubnetIds
+      PrivateDnsEnabled: true
+
+  # Amazon Connect App Integrations Endpoint
+  ConnectEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${Region}.app-integrations
+      VpcEndpointType: Interface
+      SecurityGroupIds:
+        - !Select [0, !Ref SecurityGroupIds]
+      SubnetIds: !Ref PrivateSubnetIds
+      PrivateDnsEnabled: true
+
+  # DynamoDB Endpoint
+  DynamoDbEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${Region}.dynamodb
+      VpcEndpointType: Interface
+      SecurityGroupIds:
+        - !Select [0, !Ref SecurityGroupIds]
+      SubnetIds: !Ref PrivateSubnetIds
+
+  # Lex V2 Runtime Endpoint
+  LexV2Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${Region}.runtime-v2-lex
+      VpcEndpointType: Interface
+      SecurityGroupIds:
+        - !Select [0, !Ref SecurityGroupIds]
+      SubnetIds: !Ref PrivateSubnetIds
+      PrivateDnsEnabled: true
+
+  # Lambda Endpoint
+  LambdaEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcId
+      ServiceName: !Sub com.amazonaws.${Region}.lambda
+      VpcEndpointType: Interface
+      SecurityGroupIds:
+        - !Select [0, !Ref SecurityGroupIds]
+      SubnetIds: !Ref PrivateSubnetIds
+      PrivateDnsEnabled: true
+
+Outputs:
+  ContactCenterCoreApiEndpointId:
+    Description: Contact Center Core API Endpoint ID
+    Value: !Ref ContactCenterCoreApiEndpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-ContactCenterCoreApiEndpointId
+
+  CommandCenterApiEndpointId:
+    Description: Command Center API Endpoint ID
+    Value: !Ref CommandCenterApiEndpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-CommandCenterApiEndpointId
+
+  S3EndpointId:
+    Description: S3 Endpoint ID
+    Value: !Ref S3Endpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-S3EndpointId
+
+  S3EndpointDns:
+    Description: S3 Endpoint DNS
+    Value: !Sub 
+      - https://bucket.${DnsName}
+      - DnsName: !Select [1, !Split [':', !Select [0, !GetAtt S3Endpoint.DnsEntries]]]
+    Export:
+      Name: !Sub ${AWS::StackName}-S3EndpointDns
+
+  SecretsManagerEndpointId:
+    Description: Secrets Manager Endpoint ID
+    Value: !Ref SecretsManagerEndpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-SecretsManagerEndpointId
+
+  ComprehendEndpointId:
+    Description: Comprehend Endpoint ID
+    Value: !Ref ComprehendEndpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-ComprehendEndpointId
+
+  TranscribeEndpointId:
+    Description: Transcribe Endpoint ID
+    Value: !Ref TranscribeEndpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-TranscribeEndpointId
+
+  ConnectEndpointId:
+    Description: Connect Endpoint ID
+    Value: !Ref ConnectEndpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-ConnectEndpointId
+
+  DynamoDbEndpointId:
+    Description: DynamoDB Endpoint ID
+    Value: !Ref DynamoDbEndpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-DynamoDbEndpointId
+
+  DynamoDbEndpointDns:
+    Description: DynamoDB Endpoint DNS
+    Value: !Sub 
+      - https://${DnsName}
+      - DnsName: !Select [1, !Split [':', !Select [0, !GetAtt DynamoDbEndpoint.DnsEntries]]]
+    Export:
+      Name: !Sub ${AWS::StackName}-DynamoDbEndpointDns
+
+  LexV2EndpointId:
+    Description: Lex V2 Endpoint ID
+    Value: !Ref LexV2Endpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-LexV2EndpointId
+
+  LambdaEndpointId:
+    Description: Lambda Endpoint ID
+    Value: !Ref LambdaEndpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaEndpointId

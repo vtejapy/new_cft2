@@ -1,0 +1,352 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Master CloudFormation template for Genpact Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - stg
+      - prod
+    Description: Environment name (dev, stg, or prod)
+  
+  Region:
+    Type: String
+    Default: us-east-1
+    Description: AWS region for deployment
+  
+  Client:
+    Type: String
+    Default: gen-client5
+    Description: Client name
+  
+  CostCenter:
+    Type: String
+    Default: "1003"
+    Description: Cost center for billing tags
+  
+  VpcCidr:
+    Type: String
+    Default: 10.113.0.0/16
+    Description: CIDR block for the VPC
+  
+  DatabasePassword:
+    Type: String
+    NoEcho: true
+    Description: Master password for RDS database
+  
+  TemplatesBucket:
+    Type: String
+    Description: S3 bucket containing nested templates
+
+Resources:
+  # VPC and Networking Stack
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/vpc.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        VpcCidr: !Ref VpcCidr
+        PrivateCidrOffset: "10"
+        PublicCidrOffset: "20"
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+        - Key: appService
+          Value: !Ref Client
+        - Key: deployedBy
+          Value: cloudformation
+
+  # Security Groups Stack
+  SecurityGroupsStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VPCStack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/security-groups.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        VpcId: !GetAtt VPCStack.Outputs.VpcId
+        VpcCidr: !Ref VpcCidr
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # IAM Roles and Policies Stack
+  IAMStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/iam.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+      Capabilities:
+        - CAPABILITY_IAM
+        - CAPABILITY_NAMED_IAM
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # S3 Buckets Stack
+  S3Stack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/s3.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        RecTransExpiration: "2555"
+        RecTransItTransition: "90"
+        RecTransGlacierTransition: "365"
+        ExpReportsExpiration: "180"
+        ScreenRecExpiration: "60"
+        VoicemailExpiration: "30"
+        LexBotExpiration: "180"
+        BucketLoggingExpiration: "180"
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # VPC Endpoints Stack
+  EndpointsStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: 
+      - VPCStack
+      - SecurityGroupsStack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/endpoints.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        VpcId: !GetAtt VPCStack.Outputs.VpcId
+        VpcCidr: !Ref VpcCidr
+        PrivateSubnetIds: !GetAtt VPCStack.Outputs.PrivateSubnetIds
+        SecurityGroupIds: !GetAtt SecurityGroupsStack.Outputs.EndpointSecurityGroups
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # RDS Database Stack
+  RDSStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - VPCStack
+      - SecurityGroupsStack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/rds.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        DatabasePassword: !Ref DatabasePassword
+        VpcId: !GetAtt VPCStack.Outputs.VpcId
+        PrivateSubnetIds: !GetAtt VPCStack.Outputs.PrivateSubnetIds
+        RdsSecurityGroupId: !GetAtt SecurityGroupsStack.Outputs.RdsSecurityGroupId
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # DynamoDB Stack
+  DynamoDBStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/dynamodb.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # Kinesis Streams Stack
+  KinesisStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: S3Stack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/kinesis.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        FirehoseBucketArn: !GetAtt S3Stack.Outputs.FirehoseBucketArn
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # Lambda Functions Stack
+  LambdaStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - VPCStack
+      - SecurityGroupsStack
+      - IAMStack
+      - S3Stack
+      - RDSStack
+      - EndpointsStack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/lambda.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        VpcId: !GetAtt VPCStack.Outputs.VpcId
+        PrivateSubnetIds: !GetAtt VPCStack.Outputs.PrivateSubnetIds
+        LambdaSecurityGroupIds: !GetAtt SecurityGroupsStack.Outputs.LambdaSecurityGroups
+        LambdaRoleArns: !GetAtt IAMStack.Outputs.LambdaRoleArns
+        S3BucketArns: !GetAtt S3Stack.Outputs.BucketArns
+        RdsEndpoint: !GetAtt RDSStack.Outputs.RdsEndpoint
+        RdsSecretArn: !GetAtt RDSStack.Outputs.RdsSecretArn
+        DynamoDbTableName: !GetAtt DynamoDBStack.Outputs.QueueExperienceTableName
+        S3VpcEndpointDns: !GetAtt EndpointsStack.Outputs.S3EndpointDns
+        DynamoDbEndpointDns: !GetAtt EndpointsStack.Outputs.DynamoDbEndpointDns
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # Amazon Connect Stack
+  ConnectStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - S3Stack
+      - KinesisStack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/connect.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        RecordingsBucketArn: !GetAtt S3Stack.Outputs.RecordingsTranscriptsBucketArn
+        CTRStreamArn: !GetAtt KinesisStack.Outputs.CTRStreamArn
+        AgentEventStreamArn: !GetAtt KinesisStack.Outputs.AgentEventStreamArn
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # API Gateway Stack
+  APIGatewayStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - LambdaStack
+      - EndpointsStack
+      - ConnectStack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/api-gateway.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        ContactCenterCoreApiEndpointId: !GetAtt EndpointsStack.Outputs.ContactCenterCoreApiEndpointId
+        CommandCenterApiEndpointId: !GetAtt EndpointsStack.Outputs.CommandCenterApiEndpointId
+        ContactCenterCoreLambdaArn: !GetAtt LambdaStack.Outputs.ContactCenterCoreLambdaArn
+        CommandCenterLambdaArn: !GetAtt LambdaStack.Outputs.CommandCenterLambdaArn
+        ConnectInstanceArn: !GetAtt ConnectStack.Outputs.ConnectInstanceArn
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # EventBridge Rules Stack
+  EventBridgeStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: LambdaStack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/eventbridge.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        OutboundContactLambdaArn: !GetAtt LambdaStack.Outputs.OutboundContactPrecheckLambdaArn
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+  # CloudWatch Dashboards and Alarms Stack
+  CloudWatchStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+      - ConnectStack
+      - APIGatewayStack
+      - LambdaStack
+    Properties:
+      TemplateURL: !Sub https://s3.amazonaws.com/${TemplatesBucket}/templates/cloudwatch.yaml
+      Parameters:
+        Environment: !Ref Environment
+        Region: !Ref Region
+        Client: !Ref Client
+        ConnectInstanceId: !GetAtt ConnectStack.Outputs.ConnectInstanceId
+        CloudWatchAlarmLambdaArn: !GetAtt LambdaStack.Outputs.CloudWatchAlarmProcessorLambdaArn
+        ApiGatewayRestApiId: !GetAtt APIGatewayStack.Outputs.ConnectCoreApiId
+      Tags:
+        - Key: environment
+          Value: !Ref Environment
+        - Key: costCenter
+          Value: !Ref CostCenter
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !GetAtt VPCStack.Outputs.VpcId
+    Export:
+      Name: !Sub ${AWS::StackName}-VpcId
+
+  ConnectInstanceId:
+    Description: Amazon Connect Instance ID
+    Value: !GetAtt ConnectStack.Outputs.ConnectInstanceId
+    Export:
+      Name: !Sub ${AWS::StackName}-ConnectInstanceId
+
+  ConnectInstanceArn:
+    Description: Amazon Connect Instance ARN
+    Value: !GetAtt ConnectStack.Outputs.ConnectInstanceArn
+    Export:
+      Name: !Sub ${AWS::StackName}-ConnectInstanceArn
+
+  ApiGatewayUrls:
+    Description: API Gateway URLs
+    Value: !GetAtt APIGatewayStack.Outputs.ApiUrls
+    Export:
+      Name: !Sub ${AWS::StackName}-ApiUrls
+
+  S3Buckets:
+    Description: S3 Bucket Names
+    Value: !GetAtt S3Stack.Outputs.BucketNames
+    Export:
+      Name: !Sub ${AWS::StackName}-S3Buckets
+
+  RdsEndpoint:
+    Description: RDS Database Endpoint
+    Value: !GetAtt RDSStack.Outputs.RdsEndpoint
+    Export:
+      Name: !Sub ${AWS::StackName}-RdsEndpoint

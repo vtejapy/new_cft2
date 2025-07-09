@@ -1,0 +1,250 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'RDS PostgreSQL database for Contact Center infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment name
+  
+  Region:
+    Type: String
+    Description: AWS region
+  
+  Client:
+    Type: String
+    Description: Client name
+  
+  DatabasePassword:
+    Type: String
+    NoEcho: true
+    Description: Master password for the database
+  
+  VpcId:
+    Type: String
+    Description: VPC ID
+  
+  PrivateSubnetIds:
+    Type: CommaDelimitedList
+    Description: List of private subnet IDs
+  
+  RdsSecurityGroupId:
+    Type: String
+    Description: RDS security group ID
+  
+  EngineVersion:
+    Type: String
+    Default: '16.3'
+    Description: PostgreSQL engine version
+  
+  InstanceClass:
+    Type: String
+    Default: db.t3.medium
+    Description: RDS instance class
+  
+  AllocatedStorage:
+    Type: Number
+    Default: 100
+    Description: Allocated storage in GB
+  
+  StorageType:
+    Type: String
+    Default: gp3
+    Description: Storage type
+  
+  BackupRetentionPeriod:
+    Type: Number
+    Default: 7
+    Description: Backup retention period in days
+  
+  MultiAZ:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable Multi-AZ deployment
+  
+  DatabaseName:
+    Type: String
+    Default: postgres
+    Description: Database name
+  
+  Username:
+    Type: String
+    Default: genpactadmin
+    Description: Master username
+  
+  MaintenanceWindow:
+    Type: String
+    Default: 'Sun:00:00-Sun:04:00'
+    Description: Maintenance window
+
+Resources:
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub rds-db-subnet-group-${Client}-${Region}-${Environment}
+      DBSubnetGroupDescription: Subnet group for RDS PostgreSQL
+      SubnetIds: !Ref PrivateSubnetIds
+      Tags:
+        - Key: Name
+          Value: !Sub rds-db-subnet-group-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # RDS Parameter Group
+  DBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Family: postgres16
+      Description: !Sub Parameter group for PostgreSQL ${EngineVersion}
+      Parameters:
+        shared_preload_libraries: pg_stat_statements
+        log_statement: all
+        log_min_duration_statement: 0
+      Tags:
+        - Key: Name
+          Value: !Sub rds-parameter-group-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # RDS PostgreSQL Instance
+  PostgresRDS:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub db-${Client}-${Region}-${Environment}
+      Engine: postgres
+      EngineVersion: !Ref EngineVersion
+      DBInstanceClass: !Ref InstanceClass
+      AllocatedStorage: !Ref AllocatedStorage
+      StorageType: !Ref StorageType
+      StorageEncrypted: true
+      MultiAZ: !Ref MultiAZ
+      MasterUsername: !Ref Username
+      MasterUserPassword: !Ref DatabasePassword
+      DBName: !Ref DatabaseName
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RdsSecurityGroupId
+      DBParameterGroupName: !Ref DBParameterGroup
+      BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      PreferredBackupWindow: '03:00-04:00'
+      PreferredMaintenanceWindow: !Ref MaintenanceWindow
+      EnableCloudwatchLogsExports:
+        - postgresql
+      MonitoringInterval: 60
+      MonitoringRoleArn: !GetAtt RDSEnhancedMonitoringRole.Arn
+      DeletionProtection: true
+      CopyTagsToSnapshot: true
+      Tags:
+        - Key: Name
+          Value: !Sub db-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # RDS Enhanced Monitoring Role
+  RDSEnhancedMonitoringRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: monitoring.rds.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole
+      Tags:
+        - Key: Name
+          Value: !Sub rds-monitoring-role-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  # Store connection info in Parameter Store
+  RdsEndpointParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /${AWS::StackName}/RdsEndpoint
+      Type: String
+      Value: !GetAtt PostgresRDS.Endpoint.Address
+      Description: RDS PostgreSQL endpoint
+
+  RdsPortParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /${AWS::StackName}/RdsPort
+      Type: String
+      Value: !GetAtt PostgresRDS.Endpoint.Port
+      Description: RDS PostgreSQL port
+
+  RdsArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /${AWS::StackName}/RdsArn
+      Type: String
+      Value: !Sub arn:aws:rds:${Region}:${AWS::AccountId}:db:${PostgresRDS}
+      Description: RDS PostgreSQL ARN
+
+  # Secret for RDS credentials
+  RdsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub rds-secret-${Client}-${Region}-${Environment}
+      Description: RDS PostgreSQL master credentials
+      SecretString: !Sub |
+        {
+          "username": "${Username}",
+          "password": "${DatabasePassword}",
+          "engine": "postgres",
+          "host": "${PostgresRDS.Endpoint.Address}",
+          "port": ${PostgresRDS.Endpoint.Port},
+          "dbname": "${DatabaseName}"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub rds-secret-${Client}-${Region}-${Environment}
+        - Key: environment
+          Value: !Ref Environment
+
+  RdsSecretArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub /${AWS::StackName}/RdsSecretArn
+      Type: String
+      Value: !Ref RdsSecret
+      Description: RDS Secret ARN
+
+Outputs:
+  RdsEndpoint:
+    Description: RDS PostgreSQL Endpoint
+    Value: !GetAtt PostgresRDS.Endpoint.Address
+    Export:
+      Name: !Sub ${AWS::StackName}-RdsEndpoint
+
+  RdsPort:
+    Description: RDS PostgreSQL Port
+    Value: !GetAtt PostgresRDS.Endpoint.Port
+    Export:
+      Name: !Sub ${AWS::StackName}-RdsPort
+
+  RdsArn:
+    Description: RDS PostgreSQL ARN
+    Value: !Sub arn:aws:rds:${Region}:${AWS::AccountId}:db:${PostgresRDS}
+    Export:
+      Name: !Sub ${AWS::StackName}-RdsArn
+
+  RdsSecretArn:
+    Description: RDS Secret ARN
+    Value: !Ref RdsSecret
+    Export:
+      Name: !Sub ${AWS::StackName}-RdsSecretArn
+
+  DBSubnetGroupName:
+    Description: DB Subnet Group Name
+    Value: !Ref DBSubnetGroup
+    Export:
+      Name: !Sub ${AWS::StackName}-DBSubnetGroup
