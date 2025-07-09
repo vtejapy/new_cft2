@@ -1,0 +1,377 @@
+name: Deploy to Development
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - 'cloudformation/**'
+      - '.github/workflows/deploy-dev.yml'
+  workflow_dispatch:
+    inputs:
+      force-deploy:
+        description: 'Force deployment even if no changes detected'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: dev
+  STACK_NAME: contact-center-dev
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  pre-deployment:
+    name: Pre-deployment Checks
+    runs-on: ubuntu-latest
+    outputs:
+      should-deploy: ${{ steps.check-changes.outputs.should-deploy }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          
+      - name: Check for infrastructure changes
+        id: check-changes
+        run: |
+          if [[ "${{ github.event.inputs.force-deploy }}" == "true" ]]; then
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+            echo "Force deployment requested" >> $GITHUB_STEP_SUMMARY
+          else
+            # Check if there are changes in cloudformation directory
+            if git diff --name-only HEAD^ HEAD | grep -q "^cloudformation/"; then
+              echo "should-deploy=true" >> $GITHUB_OUTPUT
+              echo "Infrastructure changes detected" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "should-deploy=false" >> $GITHUB_OUTPUT
+              echo "No infrastructure changes detected" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+  validate:
+    name: Validate Templates
+    runs-on: ubuntu-latest
+    needs: pre-deployment
+    if: needs.pre-deployment.outputs.should-deploy == 'true'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Install dependencies
+        run: |
+          pip install cfn-lint boto3
+          
+      - name: Validate CloudFormation templates
+        run: |
+          cd cloudformation
+          ./scripts/validate.sh
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Validate with AWS
+        run: |
+          cd cloudformation
+          aws cloudformation validate-template --template-body file://main.yaml
+
+  build-lambda:
+    name: Build Lambda Functions
+    runs-on: ubuntu-latest
+    needs: validate
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Cache Node modules
+        uses: actions/cache@v3
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          
+      - name: Build Lambda packages
+        run: |
+          cd cloudformation
+          
+          # Create directories
+          mkdir -p lambda-code/functions
+          mkdir -p lambda-code/layers
+          
+          # Package sample functions (replace with actual build process)
+          echo "Building Lambda functions..."
+          
+          # For each Python function
+          for func in command-center contact-center-core-api; do
+            mkdir -p temp-build/$func
+            echo "def lambda_handler(event, context): return {'statusCode': 200}" > temp-build/$func/lambda_function.py
+            cd temp-build/$func
+            zip -r ../../lambda-code/functions/$func.zip .
+            cd ../..
+          done
+          
+          # For each Node.js function
+          for func in kvs-processor ctr-processor; do
+            mkdir -p temp-build/$func
+            echo "exports.handler = async (event) => { return { statusCode: 200 }; };" > temp-build/$func/index.js
+            cd temp-build/$func
+            zip -r ../../lambda-code/functions/$func.zip .
+            cd ../..
+          done
+          
+          # Build layers (example)
+          for layer in genpact-itr-agent-desktop genpact-postgresnew; do
+            mkdir -p temp-build/$layer/python
+            echo "# Layer placeholder" > temp-build/$layer/python/__init__.py
+            cd temp-build/$layer
+            zip -r ../../lambda-code/layers/$layer.zip .
+            cd ../..
+          done
+          
+          # Clean up
+          rm -rf temp-build
+          
+      - name: Upload Lambda artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: lambda-packages
+          path: cloudformation/lambda-code/
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    needs: [validate, build-lambda]
+    environment: development
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download Lambda artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: lambda-packages
+          path: cloudformation/lambda-code/
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Setup S3 buckets
+        run: |
+          cd cloudformation
+          
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          TEMPLATES_BUCKET="cf-templates-${ACCOUNT_ID}-${ENVIRONMENT}"
+          LAMBDA_BUCKET="lambda-code-${ACCOUNT_ID}-${ENVIRONMENT}"
+          
+          # Create buckets if they don't exist
+          for bucket in $TEMPLATES_BUCKET $LAMBDA_BUCKET; do
+            if ! aws s3 ls "s3://$bucket" 2>&1 | grep -q 'NoSuchBucket'; then
+              echo "Bucket $bucket already exists"
+            else
+              echo "Creating bucket $bucket"
+              aws s3 mb "s3://$bucket" --region ${{ env.AWS_REGION }}
+              aws s3api put-bucket-versioning \
+                --bucket $bucket \
+                --versioning-configuration Status=Enabled
+            fi
+          done
+          
+          echo "TEMPLATES_BUCKET=$TEMPLATES_BUCKET" >> $GITHUB_ENV
+          echo "LAMBDA_BUCKET=$LAMBDA_BUCKET" >> $GITHUB_ENV
+          
+      - name: Upload templates to S3
+        run: |
+          cd cloudformation
+          aws s3 sync templates/ "s3://${{ env.TEMPLATES_BUCKET }}/templates/" --delete
+          
+      - name: Upload Lambda code to S3
+        run: |
+          cd cloudformation
+          aws s3 sync lambda-code/ "s3://${{ env.LAMBDA_BUCKET }}/" --delete
+          
+      - name: Deploy CloudFormation stack
+        id: deploy-stack
+        run: |
+          cd cloudformation
+          
+          # Get database password from Secrets Manager
+          DB_PASSWORD=$(aws secretsmanager get-secret-value \
+            --secret-id "/${ENVIRONMENT}/rds/password" \
+            --query SecretString \
+            --output text 2>/dev/null || echo "")
+            
+          if [ -z "$DB_PASSWORD" ]; then
+            # Generate a new password if not exists
+            DB_PASSWORD=$(openssl rand -base64 32)
+            aws secretsmanager create-secret \
+              --name "/${ENVIRONMENT}/rds/password" \
+              --secret-string "$DB_PASSWORD" || true
+          fi
+          
+          # Deploy stack
+          aws cloudformation deploy \
+            --template-file main.yaml \
+            --stack-name ${{ env.STACK_NAME }} \
+            --parameter-overrides \
+              file://parameters/${{ env.ENVIRONMENT }}.json \
+              ParameterKey=DatabasePassword,ParameterValue="$DB_PASSWORD" \
+              ParameterKey=TemplatesBucket,ParameterValue=${{ env.TEMPLATES_BUCKET }} \
+              ParameterKey=LambdaCodeBucket,ParameterValue=${{ env.LAMBDA_BUCKET }} \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --tags \
+              Environment=${{ env.ENVIRONMENT }} \
+              DeployedBy=GitHubActions \
+              Repository=${{ github.repository }} \
+              Commit=${{ github.sha }}
+              
+      - name: Get stack outputs
+        if: success()
+        run: |
+          cd cloudformation
+          
+          # Get stack outputs
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs' \
+            --output table | tee stack-outputs.txt
+            
+          # Save important outputs as artifacts
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs' \
+            --output json > stack-outputs.json
+            
+      - name: Upload deployment outputs
+        if: success()
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-outputs-dev
+          path: |
+            cloudformation/stack-outputs.txt
+            cloudformation/stack-outputs.json
+
+  test:
+    name: Run Post-Deployment Tests
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: success()
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Run integration tests
+        run: |
+          cd cloudformation
+          chmod +x tests/post-deployment.sh
+          ./tests/post-deployment.sh ${{ env.ENVIRONMENT }} ${{ env.AWS_REGION }} ${{ env.STACK_NAME }}
+          
+      - name: Run smoke tests
+        run: |
+          cd cloudformation
+          
+          echo "## Smoke Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get API Gateway URL
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ConnectCoreApiUrl`].OutputValue' \
+            --output text)
+            
+          if [ ! -z "$API_URL" ]; then
+            echo "### API Gateway Tests" >> $GITHUB_STEP_SUMMARY
+            
+            # Test health endpoint
+            if curl -s -o /dev/null -w "%{http_code}" $API_URL/health | grep -q "200"; then
+              echo "✅ Health check passed" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ Health check failed" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+          
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-dev
+          path: |
+            cloudformation/test-report.txt
+            
+  notify:
+    name: Send Notifications
+    runs-on: ubuntu-latest
+    needs: [deploy, test]
+    if: always()
+    
+    steps:
+      - name: Send Slack notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL }}
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            Development Deployment ${{ needs.deploy.result }}
+            Environment: ${{ env.ENVIRONMENT }}
+            Stack: ${{ env.STACK_NAME }}
+            Commit: ${{ github.sha }}
+            Author: ${{ github.actor }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          
+      - name: Create GitHub deployment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              environment: 'development',
+              description: 'Automated deployment to development',
+              auto_merge: false,
+              required_contexts: []
+            });
+            
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: '${{ needs.deploy.result }}' === 'success' ? 'success' : 'failure',
+              environment_url: 'https://dev.contact-center.example.com'
+            });

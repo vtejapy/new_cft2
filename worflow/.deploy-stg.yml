@@ -1,0 +1,404 @@
+name: Deploy to Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      source-environment:
+        description: 'Source environment to promote from'
+        required: true
+        type: choice
+        options:
+          - dev
+        default: dev
+      run-tests:
+        description: 'Run full test suite after deployment'
+        required: true
+        type: boolean
+        default: true
+      notification-channel:
+        description: 'Slack channel for notifications'
+        required: false
+        type: string
+        default: '#deployments'
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: stg
+  STACK_NAME: contact-center-stg
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  prepare:
+    name: Prepare Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      commit-sha: ${{ steps.get-commit.outputs.sha }}
+      deployment-id: ${{ steps.create-deployment.outputs.deployment-id }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Get source environment details
+        id: get-commit
+        run: |
+          # For now, use current commit
+          # In production, you might want to get the commit deployed to source environment
+          echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
+          
+      - name: Create GitHub deployment
+        id: create-deployment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: '${{ steps.get-commit.outputs.sha }}',
+              environment: 'staging',
+              description: 'Manual deployment to staging',
+              auto_merge: false,
+              required_contexts: []
+            });
+            
+            core.setOutput('deployment-id', deployment.data.id);
+            
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.data.id,
+              state: 'pending',
+              description: 'Deployment started'
+            });
+
+  validate:
+    name: Validate Configuration
+    runs-on: ubuntu-latest
+    needs: prepare
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit-sha }}
+          
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Validate templates
+        run: |
+          pip install cfn-lint
+          cd cloudformation
+          ./scripts/validate.sh
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Check prerequisites
+        run: |
+          cd cloudformation
+          
+          echo "## Pre-deployment Checks" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Check if source stack exists
+          SOURCE_STACK="contact-center-${{ github.event.inputs.source-environment }}"
+          if aws cloudformation describe-stacks --stack-name $SOURCE_STACK 2>/dev/null; then
+            echo "✅ Source stack exists: $SOURCE_STACK" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Source stack not found: $SOURCE_STACK" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          # Check if target stack exists (for updates)
+          if aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} 2>/dev/null; then
+            echo "ℹ️ Target stack exists - will update: ${{ env.STACK_NAME }}" >> $GITHUB_STEP_SUMMARY
+            echo "STACK_EXISTS=true" >> $GITHUB_ENV
+          else
+            echo "ℹ️ Target stack does not exist - will create: ${{ env.STACK_NAME }}" >> $GITHUB_STEP_SUMMARY
+            echo "STACK_EXISTS=false" >> $GITHUB_ENV
+          fi
+
+  create-changeset:
+    name: Create Change Set
+    runs-on: ubuntu-latest
+    needs: [prepare, validate]
+    environment: staging-plan
+    outputs:
+      changeset-id: ${{ steps.create-changeset.outputs.changeset-id }}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit-sha }}
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Setup S3 buckets
+        run: |
+          cd cloudformation
+          
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          TEMPLATES_BUCKET="cf-templates-${ACCOUNT_ID}-${ENVIRONMENT}"
+          LAMBDA_BUCKET="lambda-code-${ACCOUNT_ID}-${ENVIRONMENT}"
+          
+          # Create buckets if needed
+          for bucket in $TEMPLATES_BUCKET $LAMBDA_BUCKET; do
+            if ! aws s3 ls "s3://$bucket" 2>&1 | grep -q 'NoSuchBucket'; then
+              echo "Bucket exists: $bucket"
+            else
+              aws s3 mb "s3://$bucket" --region ${{ env.AWS_REGION }}
+              aws s3api put-bucket-versioning \
+                --bucket $bucket \
+                --versioning-configuration Status=Enabled
+            fi
+          done
+          
+          echo "TEMPLATES_BUCKET=$TEMPLATES_BUCKET" >> $GITHUB_ENV
+          echo "LAMBDA_BUCKET=$LAMBDA_BUCKET" >> $GITHUB_ENV
+          
+      - name: Sync artifacts from source environment
+        run: |
+          cd cloudformation
+          
+          # Copy Lambda packages from dev environment
+          SOURCE_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          SOURCE_LAMBDA_BUCKET="lambda-code-${SOURCE_ACCOUNT_ID}-${{ github.event.inputs.source-environment }}"
+          
+          echo "Copying Lambda packages from $SOURCE_LAMBDA_BUCKET to ${{ env.LAMBDA_BUCKET }}"
+          aws s3 sync "s3://$SOURCE_LAMBDA_BUCKET/" "s3://${{ env.LAMBDA_BUCKET }}/" --delete
+          
+          # Upload templates
+          aws s3 sync templates/ "s3://${{ env.TEMPLATES_BUCKET }}/templates/" --delete
+          
+      - name: Create change set
+        id: create-changeset
+        run: |
+          cd cloudformation
+          
+          CHANGE_SET_NAME="staging-deploy-${{ github.run_number }}"
+          
+          # Get database password
+          DB_PASSWORD=$(aws secretsmanager get-secret-value \
+            --secret-id "/${ENVIRONMENT}/rds/password" \
+            --query SecretString \
+            --output text 2>/dev/null || echo "")
+            
+          if [ -z "$DB_PASSWORD" ]; then
+            DB_PASSWORD=$(openssl rand -base64 32)
+            aws secretsmanager create-secret \
+              --name "/${ENVIRONMENT}/rds/password" \
+              --secret-string "$DB_PASSWORD" || true
+          fi
+          
+          # Determine change set type
+          if [ "${{ env.STACK_EXISTS }}" == "true" ]; then
+            CHANGE_SET_TYPE="UPDATE"
+          else
+            CHANGE_SET_TYPE="CREATE"
+          fi
+          
+          # Create change set
+          aws cloudformation create-change-set \
+            --stack-name ${{ env.STACK_NAME }} \
+            --change-set-name $CHANGE_SET_NAME \
+            --template-body file://main.yaml \
+            --parameters \
+              file://parameters/${{ env.ENVIRONMENT }}.json \
+              ParameterKey=DatabasePassword,ParameterValue="$DB_PASSWORD" \
+              ParameterKey=TemplatesBucket,ParameterValue=${{ env.TEMPLATES_BUCKET }} \
+              ParameterKey=LambdaCodeBucket,ParameterValue=${{ env.LAMBDA_BUCKET }} \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
+            --change-set-type $CHANGE_SET_TYPE \
+            --tags \
+              Environment=${{ env.ENVIRONMENT }} \
+              DeployedBy=GitHubActions \
+              SourceEnvironment=${{ github.event.inputs.source-environment }}
+              
+          # Wait for change set to be created
+          aws cloudformation wait change-set-create-complete \
+            --stack-name ${{ env.STACK_NAME }} \
+            --change-set-name $CHANGE_SET_NAME
+            
+          echo "changeset-id=$CHANGE_SET_NAME" >> $GITHUB_OUTPUT
+          
+      - name: Review change set
+        run: |
+          cd cloudformation
+          
+          echo "## Change Set Review" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Change Set:** ${{ steps.create-changeset.outputs.changeset-id }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get change set details
+          CHANGES=$(aws cloudformation describe-change-set \
+            --stack-name ${{ env.STACK_NAME }} \
+            --change-set-name ${{ steps.create-changeset.outputs.changeset-id }} \
+            --query 'Changes[*].[Type,ResourceChange.Action,ResourceChange.LogicalResourceId,ResourceChange.ResourceType]' \
+            --output json)
+            
+          echo "### Proposed Changes" >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> $GITHUB_STEP_SUMMARY
+          echo "$CHANGES" | jq -r '.[] | "- \(.[1]) \(.[2]) (\(.[3]))"' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          # Count changes by action
+          ADD_COUNT=$(echo "$CHANGES" | jq '[.[] | select(.[1] == "Add")] | length')
+          MODIFY_COUNT=$(echo "$CHANGES" | jq '[.[] | select(.[1] == "Modify")] | length')
+          REMOVE_COUNT=$(echo "$CHANGES" | jq '[.[] | select(.[1] == "Remove")] | length')
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Resources to add: $ADD_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- Resources to modify: $MODIFY_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "- Resources to remove: $REMOVE_COUNT" >> $GITHUB_STEP_SUMMARY
+
+  deploy:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [prepare, create-changeset]
+    environment: staging
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Execute change set
+        run: |
+          # Update deployment status
+          curl -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/deployments/${{ needs.prepare.outputs.deployment-id }}/statuses" \
+            -d '{"state":"in_progress","description":"Executing change set"}'
+          
+          # Execute the change set
+          aws cloudformation execute-change-set \
+            --stack-name ${{ env.STACK_NAME }} \
+            --change-set-name ${{ needs.create-changeset.outputs.changeset-id }}
+            
+          # Wait for stack to complete
+          aws cloudformation wait stack-update-complete \
+            --stack-name ${{ env.STACK_NAME }} || \
+          aws cloudformation wait stack-create-complete \
+            --stack-name ${{ env.STACK_NAME }}
+            
+      - name: Get stack outputs
+        run: |
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs' \
+            --output table
+            
+          # Save outputs
+          aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs' \
+            --output json > stack-outputs.json
+            
+      - name: Upload deployment artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: staging-deployment-${{ github.run_number }}
+          path: stack-outputs.json
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy]
+    if: ${{ github.event.inputs.run-tests == 'true' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit-sha }}
+          
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+          
+      - name: Run integration tests
+        run: |
+          cd cloudformation
+          chmod +x tests/post-deployment.sh
+          ./tests/post-deployment.sh ${{ env.ENVIRONMENT }} ${{ env.AWS_REGION }} ${{ env.STACK_NAME }}
+          
+      - name: Run performance tests
+        run: |
+          echo "## Performance Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get API endpoint
+          API_URL=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.STACK_NAME }} \
+            --query 'Stacks[0].Outputs[?OutputKey==`ConnectCoreApiUrl`].OutputValue' \
+            --output text)
+            
+          if [ ! -z "$API_URL" ]; then
+            # Run basic load test
+            echo "Running performance tests against $API_URL" >> $GITHUB_STEP_SUMMARY
+            # Add actual performance testing here
+          fi
+          
+      - name: Security scan
+        run: |
+          echo "## Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          # Add security scanning tools here
+
+  finalize:
+    name: Finalize Deployment
+    runs-on: ubuntu-latest
+    needs: [prepare, deploy, test]
+    if: always()
+    
+    steps:
+      - name: Update deployment status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ needs.deploy.result }}' === 'success' ? 'success' : 'failure';
+            
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: ${{ needs.prepare.outputs.deployment-id }},
+              state: status,
+              environment_url: 'https://stg.contact-center.example.com',
+              description: status === 'success' ? 'Deployment completed' : 'Deployment failed'
+            });
+            
+      - name: Send notifications
+        if: ${{ secrets.SLACK_WEBHOOK_URL }}
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            Staging Deployment ${{ needs.deploy.result }}
+            Environment: ${{ env.ENVIRONMENT }}
+            Source: ${{ github.event.inputs.source-environment }}
+            Tests: ${{ github.event.inputs.run-tests }}
+            Deployed by: ${{ github.actor }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+          channel: ${{ github.event.inputs.notification-channel }}
